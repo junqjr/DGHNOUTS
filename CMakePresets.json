@@ -1,0 +1,59 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "gcc",
+      "inherits": "base",
+      "displayName": "GNU g++",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "g++" }
+    },
+    {
+      "name": "nvhpc",
+      "inherits": "base",
+      "displayName": "NVIDIA HPC SDK nvc++",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "nvc++" }
+    },
+    {
+      "name": "intel",
+      "inherits": "base",
+      "displayName": "Intel oneAPI icpx",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "icpx" }
+    },
+    {
+      "name": "clang",
+      "inherits": "base",
+      "displayName": "LLVM clang++",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++" }
+    },
+    {
+      "name": "gcc-debug",
+      "inherits": "gcc",
+      "displayName": "GNU g++, debug + sanitizers",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gcc",       "configurePreset": "gcc" },
+    { "name": "nvhpc",     "configurePreset": "nvhpc" },
+    { "name": "intel",     "configurePreset": "intel" },
+    { "name": "clang",     "configurePreset": "clang" },
+    { "name": "gcc-debug", "configurePreset": "gcc-debug" }
+  ],
+  "testPresets": [
+    { "name": "gcc",       "configurePreset": "gcc",       "output": { "outputOnFailure": true } },
+    { "name": "nvhpc",     "configurePreset": "nvhpc",     "output": { "outputOnFailure": true } },
+    { "name": "intel",     "configurePreset": "intel",     "output": { "outputOnFailure": true } },
+    { "name": "clang",     "configurePreset": "clang",     "output": { "outputOnFailure": true } },
+    { "name": "gcc-debug", "configurePreset": "gcc-debug", "output": { "outputOnFailure": true } }
+  ]
+}
