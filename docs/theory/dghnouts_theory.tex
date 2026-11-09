@@ -1,0 +1,473 @@
+% DGHNOUTS - mathematical documentation of the spectral/hp library
+%
+% Notation and equation numbers follow
+%   G. Karniadakis and S. Sherwin, Spectral/hp Element Methods for
+%   Computational Fluid Dynamics, 2nd ed., Oxford University Press, 2005.
+% Equations taken from the book carry the book's number, e.g. (A.1.3).
+% Equations that are not in the book are numbered (D.1), (D.2), ...
+%
+% Build:  latexmk -pdf dghnouts_theory.tex     (or: pdflatex twice)
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+% ---------------------------------------------------------------------------
+% Notation (Karniadakis & Sherwin)
+% ---------------------------------------------------------------------------
+\newcommand{\Jac}[3]{P_{#1}^{#2,#3}}            % P_n^{alpha,beta}
+\newcommand{\Pab}[1]{P_{#1}^{\alpha,\beta}}     % P_n^{alpha,beta}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\ddx}{\frac{\dd}{\dd x}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+% equations from the book keep the book's numbers; ours are (D.n)
+\newcounter{dgeq}
+\newcommand{\dgtag}{\refstepcounter{dgeq}\tag{D.\arabic{dgeq}}}
+
+\lstset{
+  language=C++, basicstyle=\ttfamily\small, columns=fullflexible,
+  keywordstyle=\color{blue!60!black}\bfseries, commentstyle=\color{green!40!black},
+  frame=single, framerule=0.3pt, rulecolor=\color{black!30},
+  xleftmargin=1em, xrightmargin=1em, breaklines=true,
+}
+
+\title{\textbf{DGHNOUTS}\\[0.3em]
+  \large Mathematical documentation of the spectral/$hp$ library\\[0.2em]
+  \normalsize Part~I: Jacobi polynomials}
+\author{Carlos Junqueira Junior\\ \small DynFluid, Arts et M\'etiers -- ENSAM}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document gives the mathematical definition of every function of the
+DGHNOUTS spectral/$hp$ library, the equation each one implements, and the
+identities used to test it. Notation and equation numbers follow Karniadakis
+and Sherwin~\cite{KS2005}: an equation taken from the book keeps its number,
+for example~(A.1.3); an equation that is not in the book, derived here, is
+numbered (D.1), (D.2), \dots\ The document grows with the code; this part
+covers the module \code{include/jacobi.hpp}.
+\end{abstract}
+
+\tableofcontents
+
+% ===========================================================================
+\section{Notation and conventions}
+% ===========================================================================
+
+\begin{itemize}
+  \item $x \in [-1,1]$ is the coordinate of the standard interval. The
+        book also writes $\xi$ for the standard-element coordinate
+        (Chapter~2); in Appendix~A it uses $x$, and so do we.
+  \item $\Pab{n}(x)$ is the Jacobi polynomial of degree $n \ge 0$ with
+        weight parameters $\alpha,\beta > -1$.
+  \item $L_n(x) = \Jac{n}{0}{0}(x)$ is the Legendre polynomial and $T_n(x)$
+        the Chebyshev polynomial.
+  \item $\Gamma(z)$ is the Gamma function, $\Gamma(n+1)=n!$ for integer $n\ge0$.
+  \item In the code, \code{alpha} and \code{beta} are $\alpha$ and $\beta$,
+        \code{n} is $n$, and the points are an array \code{x[0..np-1]}.
+\end{itemize}
+
+\paragraph{Code conventions.}
+All functions live in namespace \code{dg} and work in double precision. They
+throw \code{std::invalid\_argument} when $n<0$ or when $\alpha\le-1$ or
+$\beta\le-1$, since the polynomials are only defined (orthogonal) for
+$\alpha,\beta>-1$. Array routines take a raw pointer and a size,
+\code{(const double* x, std::size\_t np)}, so they accept any contiguous
+storage (\code{std::vector}, C arrays, Kokkos host views).
+
+% ===========================================================================
+\section{Jacobi polynomials}
+\label{sec:jacobi}
+% ===========================================================================
+
+\subsection{Definition}
+
+Jacobi polynomials $\Pab{n}(x)$ are the polynomial solutions of the singular
+Sturm--Liouville problem~\cite[App.~A.1]{KS2005}
+\begin{equation}
+  (1-x)(1+x)\,\frac{\dd^2 y}{\dd x^2}
+  + \bigl[\beta-\alpha-(\alpha+\beta+2)x\bigr]\frac{\dd y}{\dd x}
+  = -\lambda_n\, y,
+  \tag{A.1.1}
+\end{equation}
+with
+\begin{equation*}
+  \lambda_n = n(n+\alpha+\beta+1),
+  \qquad y(x) = \Pab{n}(x).
+\end{equation*}
+They can be written explicitly with the Rodrigues formula
+\begin{equation*}
+  \Pab{n}(x) = \frac{(-1)^n}{2^n n!}\,(1-x)^{-\alpha}(1+x)^{-\beta}
+  \frac{\dd^n}{\dd x^n}\Bigl[(1-x)^{\alpha+n}(1+x)^{\beta+n}\Bigr],
+  \qquad \alpha,\beta>-1,
+\end{equation*}
+but this form is never used for computation; the recurrence of
+Section~\ref{sec:values} is.
+
+\paragraph{Special cases.}
+\begin{align*}
+  \alpha=\beta=0 &: \quad L_n(x) = \Jac{n}{0}{0}(x)
+     && \text{(Legendre)},\\
+  \alpha=\beta=-\tfrac12 &: \quad T_n(x) = \frac{2^{2n}(n!)^2}{(2n)!}\,
+     \Jac{n}{-1/2}{-1/2}(x) && \text{(Chebyshev)}.
+\end{align*}
+In a DG code the values that matter are $\alpha=\beta=0$ (Legendre modal basis
+and Gauss--Legendre points), $\alpha=\beta=1$ (interior Gauss--Lobatto points,
+Section~\ref{sec:deriv}), and $(\alpha,\beta)=(2i+1,0)$ or $(2i+2j+2,0)$ for
+the collapsed-coordinate bases of simplices.
+
+% ===========================================================================
+\subsection{Values: the three-term recurrence}
+\label{sec:values}
+% ===========================================================================
+
+The polynomials are evaluated with the recursion relation
+\begin{equation}
+\begin{aligned}
+  \Jac{0}{\alpha}{\beta}(x) &= 1,\\
+  \Jac{1}{\alpha}{\beta}(x) &= \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)x\bigr],\\
+  a_n^1\,\Pab{n+1}(x) &= \bigl(a_n^2 + a_n^3 x\bigr)\Pab{n}(x) - a_n^4\,\Pab{n-1}(x),
+\end{aligned}
+\tag{A.1.3}
+\end{equation}
+with
+\begin{align*}
+  a_n^1 &= 2(n+1)(n+\alpha+\beta+1)(2n+\alpha+\beta),\\
+  a_n^2 &= (2n+\alpha+\beta+1)(\alpha^2-\beta^2),\\
+  a_n^3 &= (2n+\alpha+\beta)(2n+\alpha+\beta+1)(2n+\alpha+\beta+2),\\
+  a_n^4 &= 2(n+\alpha)(n+\beta)(2n+\alpha+\beta+2).
+\end{align*}
+For $n\ge1$ and $\alpha,\beta>-1$ we have $2n+\alpha+\beta>0$ and
+$n+\alpha+\beta+1>0$, so $a_n^1\neq0$ and the recursion never divides by zero.
+
+\paragraph{Implementation.}
+The loop index \code{k} of the code is exactly the book's $n$ in~(A.1.3): the
+step with index $k$ uses $a_k^1,\dots,a_k^4$ and produces $\Pab{k+1}$ from
+$\Pab{k}$ and $\Pab{k-1}$, for $k=1,\dots,n-1$. The coefficients are computed
+by the internal helper \code{rec\_coef(k, alpha, beta)}.
+
+For $n_p$ points, the array routine runs the degree loop outside and the point
+loop inside:
+\begin{lstlisting}
+for (int k = 1; k < n; ++k) {
+    const RecCoef c = rec_coef(k, alpha, beta);   // once per k
+    for (std::size_t i = 0; i < np; ++i) {        // independent: vectorised
+        const double pkp1 = ((c.a2 + c.a3*x[i])*p[i] - c.a4*pm1[i]) / c.a1;
+        pm1[i] = p[i];  p[i] = pkp1;
+    }
+}
+\end{lstlisting}
+Each point still needs its own recurrence, so the operation count is
+$O(n\,n_p)$ as with $n_p$ scalar calls; the gain comes from SIMD
+vectorisation of the inner loop and from computing the coefficients once per
+degree instead of once per point.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Function & Computes \\
+\midrule
+\code{double jacobi(n, alpha, beta, x)} & $\Pab{n}(x)$ at one point \\
+\code{void jacobi(n, alpha, beta, x, np, p)} & $p_i=\Pab{n}(x_i)$, $i=0,\dots,n_p-1$ \\
+\code{void jacobi(n, alpha, beta, x, p)} & same, \code{std::vector} overload \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ===========================================================================
+\subsection{Derivatives}
+\label{sec:deriv}
+% ===========================================================================
+
+\paragraph{The book's derivative relation, and why it is not used.}
+Appendix~A gives the derivative through
+\begin{equation}
+\begin{aligned}
+  b_n^1(x)\,\ddx\Pab{n}(x) &= b_n^2(x)\,\Pab{n}(x) + b_n^3(x)\,\Pab{n-1}(x),\\
+  b_n^1(x) &= (2n+\alpha+\beta)(1-x^2),\\
+  b_n^2(x) &= n\bigl[\alpha-\beta-(2n+\alpha+\beta)x\bigr],\\
+  b_n^3(x) &= 2(n+\alpha)(n+\beta).
+\end{aligned}
+\tag{A.1.4}
+\end{equation}
+This is what Polylib's \code{jacobfd} uses. Since $b_n^1(\pm1)=0$, it cannot
+give the derivative at the end points $x=\pm1$, which are nodes of every
+Gauss--Lobatto rule. DGHNOUTS does not use~(A.1.4).
+
+\paragraph{Derivative by degree reduction.}
+Instead, \code{jacobi\_deriv} uses
+\begin{equation}
+  \ddx\Pab{n}(x) = \frac12\,(\alpha+\beta+n+1)\,\Jac{n-1}{\alpha+1}{\beta+1}(x),
+  \tag{A.1.8}
+\end{equation}
+with $\ddx\Jac{0}{\alpha}{\beta}=0$. The right-hand side is evaluated with the
+recurrence~(A.1.3) for the parameters $(\alpha+1,\beta+1)$, so it is valid on
+the whole closed interval $[-1,1]$. Applying~(A.1.8) twice gives the second
+derivative used in the tests:
+\begin{equation}
+  \frac{\dd^2}{\dd x^2}\Pab{n}(x)
+  = \frac14\,(n+\alpha+\beta+1)(n+\alpha+\beta+2)\,
+    \Jac{n-2}{\alpha+2}{\beta+2}(x).
+  \dgtag\label{eq:second-deriv}
+\end{equation}
+
+Relation~(A.1.8) also explains the Gauss--Lobatto points of Appendix~B: the
+interior points are the zeros of $\bigl[\Jac{Q-1}{\alpha}{\beta}\bigr]'$, that
+is, of $\Jac{Q-2}{\alpha+1}{\beta+1}$. For Legendre, they are the zeros of
+$\Jac{Q-2}{1}{1}$.
+
+\paragraph{Values and derivatives in one pass.}
+Differentiating~(A.1.3) with respect to $x$ (the coefficients $a_n^j$ do not
+depend on $x$) gives a recurrence for the derivative that runs in the same loop
+as the values:
+\begin{equation}
+  a_n^1\,\bigl[\Pab{n+1}\bigr]'(x)
+  = a_n^3\,\Pab{n}(x)
+  + \bigl(a_n^2 + a_n^3 x\bigr)\bigl[\Pab{n}\bigr]'(x)
+  - a_n^4\,\bigl[\Pab{n-1}\bigr]'(x),
+  \dgtag\label{eq:deriv-rec}
+\end{equation}
+started with
+\begin{equation}
+  \bigl[\Jac{0}{\alpha}{\beta}\bigr]' = 0,
+  \qquad
+  \bigl[\Jac{1}{\alpha}{\beta}\bigr]' = \tfrac12(\alpha+\beta+2).
+  \dgtag
+\end{equation}
+Like~(A.1.8), relation~\eqref{eq:deriv-rec} contains no division by
+$1-x^2$ and holds at $x=\pm1$. It is what \code{jacobi\_and\_deriv} uses. In
+exact arithmetic it gives the same derivative as~(A.1.8); in floating point
+the two agree to about $10^{-14}$ relative error for $n\le20$.
+
+\paragraph{Implementation.}
+\code{jacobi\_and\_deriv} keeps four work arrays
+($\Pab{k}$, $\Pab{k-1}$ and their derivatives). For large $n_p$ these arrays
+would be streamed through main memory at every step $k$, which makes the
+routine slower than two separate calls. The points are therefore processed in
+blocks of 256, so that the four arrays stay in the L1 cache for all $n$ steps.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Function & Computes & Equation \\
+\midrule
+\code{double jacobi\_deriv(n, alpha, beta, x)} & $\bigl[\Pab{n}\bigr]'(x)$ & (A.1.8) \\
+\code{void jacobi\_deriv(n, alpha, beta, x, np, dp)} & $\bigl[\Pab{n}\bigr]'(x_i)$ & (A.1.8) \\
+\code{void jacobi\_and\_deriv(n, alpha, beta,} & $\Pab{n}(x_i)$ and & (A.1.3), \eqref{eq:deriv-rec} \\
+\quad\code{x, np, p, dp)} & $\bigl[\Pab{n}\bigr]'(x_i)$ & \\
+\bottomrule
+\end{tabular}
+\end{center}
+In \code{jacobi\_and\_deriv}, either output pointer may be \code{nullptr}
+when only one of the two results is needed.
+
+% ===========================================================================
+\subsection{All degrees at once: the generalised Vandermonde matrix}
+\label{sec:vandermonde}
+% ===========================================================================
+
+Each step of~(A.1.3) produces the next degree, so a single pass up to
+$N=$\code{nmax} gives every polynomial $\Pab{0},\dots,\Pab{N}$. Evaluated at
+points $x_0,\dots,x_{n_p-1}$, they form the generalised Vandermonde matrix
+\begin{equation}
+  \mathbf{V}_{ik} = \Pab{k}(x_i),
+  \qquad i=0,\dots,n_p-1, \quad k=0,\dots,N.
+  \dgtag\label{eq:vandermonde}
+\end{equation}
+With Legendre polynomials ($\alpha=\beta=0$) and $x_i$ the nodes of a DG
+element, $\mathbf{V}$ maps modal coefficients $\hat u_k$ to nodal values,
+$u(x_i)=\sum_k \mathbf{V}_{ik}\hat u_k$, which is the transform needed for
+modal filtering and shock sensors.
+
+\paragraph{Implementation.}
+\code{jacobi\_all(nmax, alpha, beta, x, np, V)} stores $\mathbf{V}$ in
+row-major order, one row per point and one column per degree:
+\begin{equation*}
+  \code{V[i*(nmax+1) + k]} = \mathbf{V}_{ik} = \Pab{k}(x_i).
+\end{equation*}
+The array \code{V} must hold $n_p(N+1)$ values. Each $\Pab{k}$ is computed
+exactly once, whereas calling \code{jacobi} for each degree
+$k=0,\dots,N$ would repeat the first $k$ steps of the recurrence every time.
+
+% ===========================================================================
+\subsection{Orthogonality and norm}
+\label{sec:norm}
+% ===========================================================================
+
+Jacobi polynomials are orthogonal on $[-1,1]$ with respect to the weight
+$(1-x)^\alpha(1+x)^\beta$:
+\begin{equation}
+\begin{gathered}
+  \int_{-1}^{1}(1-x)^\alpha(1+x)^\beta\,\Pab{n}(x)\,\Pab{m}(x)\,\dd x = 0,
+  \qquad n\neq m,\\[0.4em]
+  \int_{-1}^{1}(1-x)^\alpha(1+x)^\beta\,\Pab{n}(x)\,\Pab{n}(x)\,\dd x
+  = \frac{2^{\alpha+\beta+1}}{2n+\alpha+\beta+1}\,
+    \frac{\Gamma(n+\alpha+1)\,\Gamma(n+\beta+1)}{n!\,\Gamma(n+\alpha+\beta+1)}
+  \equiv h_n^{\alpha,\beta}.
+\end{gathered}
+\tag{A.1.7}
+\end{equation}
+\code{jacobi\_norm2(n, alpha, beta)} returns $h_n^{\alpha,\beta}$.
+
+\paragraph{The case $n=0$.}
+For $n=0$ and $\alpha+\beta=-1$ (e.g.\ Chebyshev), formula~(A.1.7) reads
+$0\cdot\infty$: the factor $2n+\alpha+\beta+1$ vanishes and
+$\Gamma(n+\alpha+\beta+1)=\Gamma(0)$ is infinite. Using
+$z\,\Gamma(z)=\Gamma(z+1)$ with $z=n+\alpha+\beta+1$,
+\begin{equation*}
+  (2n+\alpha+\beta+1)\,\Gamma(n+\alpha+\beta+1)
+  \;\xrightarrow{\;n=0\;}\;
+  (\alpha+\beta+1)\,\Gamma(\alpha+\beta+1) = \Gamma(\alpha+\beta+2),
+\end{equation*}
+so that
+\begin{equation}
+  h_0^{\alpha,\beta}
+  = \frac{2^{\alpha+\beta+1}\,\Gamma(\alpha+1)\,\Gamma(\beta+1)}{\Gamma(\alpha+\beta+2)},
+  \dgtag\label{eq:h0}
+\end{equation}
+which is finite for all $\alpha,\beta>-1$. The code uses~\eqref{eq:h0} for
+$n=0$ and~(A.1.7) for $n\ge1$.
+
+\paragraph{Overflow.}
+$\Gamma(z)$ overflows double precision for $z>171.6$. The norm is therefore
+computed from logarithms with \code{std::lgamma} ($\ln|\Gamma|$, C++11),
+\begin{equation*}
+\begin{split}
+  \ln h_n^{\alpha,\beta}
+  ={}& (\alpha+\beta+1)\ln2 - \ln(2n+\alpha+\beta+1)
+  + \ln\Gamma(n+\alpha+1) + \ln\Gamma(n+\beta+1)\\
+  & - \ln\Gamma(n+1) - \ln\Gamma(n+\alpha+\beta+1),
+\end{split}
+\end{equation*}
+and $h_n^{\alpha,\beta}=\exp(\ln h_n^{\alpha,\beta})$.
+
+\paragraph{Checks.}
+For Legendre, (A.1.7) reduces to $h_n^{0,0}=2/(2n+1)$. For Chebyshev,
+\eqref{eq:h0} gives $h_0^{-1/2,-1/2}=\Gamma(\tfrac12)^2/\Gamma(1)=\pi$, the
+classical value of $\int_{-1}^{1}(1-x^2)^{-1/2}\,\dd x$.
+
+% ===========================================================================
+\section{Verification}
+\label{sec:tests}
+% ===========================================================================
+
+The program \code{tests/test\_jacobi.cpp} checks every function against
+identities of Appendix~A, for degrees $n=0,\dots,20$ and for the parameter
+pairs
+\begin{equation*}
+  (\alpha,\beta)\in\bigl\{(0,0),\,(1,0),\,(2,0),\,(1,1),\,(-\tfrac12,-\tfrac12),\,
+  (\tfrac12,\tfrac32),\,(0.3,-0.7)\bigr\}.
+\end{equation*} The last pair, with non-integer
+parameters, is beyond what Polylib can handle.
+
+\paragraph{End-point value.}
+\begin{equation}
+  \Pab{n}(1) = \binom{n+\alpha}{n} = \frac{(n+\alpha)!}{\alpha!\,n!},
+  \tag{A.1.5}
+\end{equation}
+evaluated for non-integer $\alpha$ as
+$\Gamma(n+\alpha+1)/\bigl(\Gamma(\alpha+1)\,n!\bigr)$.
+
+\paragraph{Symmetry.}
+\begin{equation}
+  \Pab{n}(-x) = (-1)^n\,\Jac{n}{\beta}{\alpha}(x).
+  \tag{A.1.6}
+\end{equation}
+
+\paragraph{Differential equation.}
+The residual of~(A.1.1) is computed with $y'$ from~(A.1.8) and $y''$
+from~\eqref{eq:second-deriv}, at interior points and at $x=\pm1$.
+
+\paragraph{End-point derivative.}
+Combining (A.1.8) and (A.1.5) with $\alpha=\beta=0$ gives
+\begin{equation}
+  L_n'(1) = \tfrac12(n+1)\,\Jac{n-1}{1}{1}(1) = \tfrac12(n+1)\,n,
+  \dgtag
+\end{equation}
+which checks that the derivative is correct exactly where~(A.1.4) fails.
+
+\paragraph{Consistency of the array routines.}
+\code{jacobi} and \code{jacobi\_deriv} on arrays, and every column of
+\code{jacobi\_all}, must agree with the single-point routines to the last bit
+(they perform the same operations). \code{jacobi\_and\_deriv} must agree to
+$10^{-12}$, since its derivative comes from~\eqref{eq:deriv-rec} rather
+than~(A.1.8).
+
+\paragraph{Optional comparison with Polylib.}
+When CMake is given \code{-DPOLYLIB\_DIR=\dots}, the tests also compare values
+and interior derivatives with Polylib's \code{jacobfd}, and
+check~(A.1.7) numerically with Polylib's Gauss--Jacobi quadrature
+\code{zwgj}, which integrates exactly polynomials of degree $\le 2Q-1$.
+
+\begin{center}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Test & Identity & Functions checked & Tolerance \\
+\midrule
+1 & Polylib \code{jacobfd} values & \code{jacobi} & $10^{-13}$ \\
+2 & Polylib \code{jacobfd} derivatives & \code{jacobi\_deriv} & $10^{-11}$ \\
+3 & (A.1.5) & \code{jacobi} & $10^{-13}$ \\
+4 & (A.1.6) & \code{jacobi} & $10^{-13}$ \\
+5 & (A.1.7) & \code{jacobi}, \code{jacobi\_norm2} & $10^{-12}$ \\
+6 & (A.1.1) & \code{jacobi}, \code{jacobi\_deriv} & $10^{-11}$ \\
+7 & $L_n'(1)=n(n+1)/2$ & \code{jacobi\_deriv} & $10^{-13}$ \\
+8 & array vs.\ single point & all array routines & $0$ / $10^{-12}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Tests 1, 2 and 5 require Polylib. Errors are relative, with a floor of $1$
+so that values close to zero are compared absolutely.
+
+% ===========================================================================
+\appendix
+\section{Function reference}
+% ===========================================================================
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.47\textwidth}>{\raggedright\arraybackslash}p{0.30\textwidth}l@{}}
+\toprule
+Signature & Result & Equation \\
+\midrule
+\code{double jacobi(int n, double alpha, double beta, double x)}
+  & $\Pab{n}(x)$ & (A.1.3) \\
+\code{double jacobi\_deriv(int n, double alpha, double beta, double x)}
+  & $\bigl[\Pab{n}\bigr]'(x)$ & (A.1.8) \\
+\code{void jacobi(int n, double alpha, double beta, const double* x, std::size\_t np, double* p)}
+  & $p_i=\Pab{n}(x_i)$ & (A.1.3) \\
+\code{void jacobi\_deriv(int n, double alpha, double beta, const double* x, std::size\_t np, double* dp)}
+  & $dp_i=\bigl[\Pab{n}\bigr]'(x_i)$ & (A.1.8) \\
+\code{void jacobi\_and\_deriv(int n, double alpha, double beta, const double* x, std::size\_t np, double* p, double* dp)}
+  & $p_i$ and $dp_i$ in one pass & (A.1.3), \eqref{eq:deriv-rec} \\
+\code{void jacobi\_all(int nmax, double alpha, double beta, const double* x, std::size\_t np, double* V)}
+  & $\mathbf{V}_{ik}=\Pab{k}(x_i)$, row-major & \eqref{eq:vandermonde} \\
+\code{double jacobi\_norm2(int n, double alpha, double beta)}
+  & $h_n^{\alpha,\beta}$ & (A.1.7), \eqref{eq:h0} \\
+\bottomrule
+\end{tabular}
+\end{center}
+The \code{std::vector} overloads of \code{jacobi} and \code{jacobi\_deriv}
+resize the output to the size of \code{x} and call the pointer versions.
+
+% ===========================================================================
+\begin{thebibliography}{9}
+\bibitem{KS2005}
+  G.~Karniadakis and S.~Sherwin,
+  \emph{Spectral/hp Element Methods for Computational Fluid Dynamics},
+  2nd ed., Oxford University Press, 2005.
+\bibitem{AS1964}
+  M.~Abramowitz and I.~A.~Stegun,
+  \emph{Handbook of Mathematical Functions}, Chapter~22,
+  National Bureau of Standards, 1964.
+\end{thebibliography}
+
+\end{document}
