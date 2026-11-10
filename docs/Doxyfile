@@ -1,0 +1,59 @@
+# Doxyfile for DGHNOUTS (Doxygen >= 1.9)
+# Only non-default settings are listed. Run from the repository root:
+#     doxygen docs/Doxyfile
+# or, from a configured build:  cmake --build --preset gcc --target doc
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+PROJECT_NAME           = DGHNOUTS
+PROJECT_BRIEF          = "Discontinuous Galerkin High-order Navier-Stokes Optimized Unstructured Threaded Solver"
+OUTPUT_DIRECTORY       = $(DGHNOUTS_DOC_DIR)
+CREATE_SUBDIRS         = NO
+STRIP_FROM_PATH        = .
+FULL_PATH_NAMES        = YES
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+INPUT                  = docs/mainpage.md include src tests
+FILE_PATTERNS          = *.hpp *.cpp *.h *.md
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = YES
+EXTRACT_ANON_NSPACES   = YES
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+SORT_MEMBER_DOCS       = NO
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
+
+# \theorypdf : link to the theory document, copied next to the HTML pages
+ALIASES                = "theorypdf=<a href=\"dghnouts_theory.pdf\">dghnouts_theory.pdf</a>"
+
+#---------------------------------------------------------------------------
+# Output: HTML, formulas rendered offline to PNG (needs latex, dvips, gs; no internet)
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+USE_MATHJAX            = NO
+HTML_FORMULA_FORMAT    = png
+FORMULA_FONTSIZE       = 13
+EXTRA_PACKAGES         = amsmath amssymb
+# Alternative, lighter build (no LaTeX needed, but formulas need internet):
+# USE_MATHJAX          = YES
+# MATHJAX_VERSION      = MathJax_3
+# MATHJAX_RELPATH      = https://cdn.jsdelivr.net/npm/mathjax@3
+
+#---------------------------------------------------------------------------
+# Graphs (needs Graphviz 'dot'; switched off automatically if absent)
+#---------------------------------------------------------------------------
+HAVE_DOT               = $(DGHNOUTS_HAVE_DOT)
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+DOT_IMAGE_FORMAT       = svg

@@ -1,8 +1,30 @@
-// test_jacobi.cpp - checks dg::jacobi against Polylib and against the
-// identities of Appendix A.1 (Karniadakis & Sherwin, 2nd ed.)
-//
-// Tests 1, 2 and 5 need Polylib as a reference; they are compiled only when
-// CMake is given POLYLIB_DIR (which defines DGPOLY_HAVE_POLYLIB).
+/**
+ * \file    test_jacobi.cpp
+ * \brief   Unit tests of the Jacobi module against the identities of
+ *          Karniadakis & Sherwin, Appendix A.1, and optionally against Polylib.
+ *
+ * \details Degrees \f$n = 0,\dots,20\f$; parameter pairs
+ *          \f$(\alpha,\beta) \in \{(0,0),(1,0),(2,0),(1,1),(-\tfrac12,-\tfrac12),
+ *          (\tfrac12,\tfrac32),(0.3,-0.7)\}\f$.
+ *
+ *          | Test | Identity                                     | Needs Polylib |
+ *          |------|----------------------------------------------|---------------|
+ *          | 1    | values vs Polylib `jacobfd`                  | yes |
+ *          | 2    | interior derivatives vs Polylib `jacobfd`    | yes |
+ *          | 3    | end-point value (A.1.5)                      | no  |
+ *          | 4    | symmetry (A.1.6)                             | no  |
+ *          | 5    | orthogonality and norm (A.1.7), Polylib `zwgj` quadrature | yes |
+ *          | 6    | differential equation (A.1.1), \f$y''\f$ from (D.1), incl. \f$x=\pm1\f$ | no |
+ *          | 7    | \f$L_n'(1) = n(n+1)/2\f$ (D.6)               | no  |
+ *          | 8    | array routines vs single-point routines      | no  |
+ *
+ *          Tests 1, 2 and 5 are compiled only when CMake is given `POLYLIB_DIR`
+ *          (which defines `DGPOLY_HAVE_POLYLIB`). The program returns 0 if all
+ *          tests pass and 1 otherwise, so `ctest` reports failures.
+ *
+ * \par Theory
+ * \theorypdf, Section 3.
+ */
 #include "jacobi.hpp"
 #ifdef DGPOLY_HAVE_POLYLIB
 #include "polylib.h"
@@ -15,12 +37,23 @@
 
 namespace {
 
-int n_fail = 0;
-int n_pass = 0;
+int n_fail = 0;   ///< number of failed checks
+int n_pass = 0;   ///< number of passed checks
 
-// relative error with a floor of 1, so values near zero are compared absolutely
+/**
+ * \brief  Relative error with a floor of 1, so values near zero are compared absolutely.
+ * \param[in] a    computed value
+ * \param[in] ref  reference value
+ * \return    \f$|a-\mathrm{ref}| / \max(1,|\mathrm{ref}|)\f$
+ */
 double rel_err(double a, double ref) { return std::fabs(a - ref) / std::max(1.0, std::fabs(ref)); }
 
+/**
+ * \brief  Print one PASS/FAIL line and update the counters.
+ * \param[in] name     description of the check
+ * \param[in] max_err  largest error found
+ * \param[in] tol      tolerance; the check passes if max_err <= tol
+ */
 void report(const char* name, double max_err, double tol)
 {
     const bool ok = max_err <= tol;
@@ -28,10 +61,15 @@ void report(const char* name, double max_err, double tol)
     ok ? ++n_pass : ++n_fail;
 }
 
-struct Params { double a, b; };
+/// A pair of Jacobi weight parameters.
+struct Params {
+    double a;   ///< \f$\alpha\f$
+    double b;   ///< \f$\beta\f$
+};
 
 #ifdef DGPOLY_HAVE_POLYLIB
-// integer / half-integer pairs: Polylib's gammaF only handles those
+/// Parameter pairs for the Polylib comparisons: integer or half-integer only,
+/// since Polylib's `gammaF` handles nothing else.
 const std::vector<Params> polylib_params = {
     {0.0, 0.0},    // Legendre
     {1.0, 0.0},    // collapsed coordinates (triangles)
@@ -43,13 +81,19 @@ const std::vector<Params> polylib_params = {
 #endif
 
 // adds a non-integer pair for the tests that do not need Polylib
+/// Parameter pairs for the tests that do not need Polylib (includes a non-integer pair).
 const std::vector<Params> all_params = {
     {0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}, {1.0, 1.0}, {-0.5, -0.5}, {0.5, 1.5}, {0.3, -0.7},
 };
 
-const int n_max = 20;
+const int n_max = 20;   ///< highest degree tested
 
-std::vector<double> interior_points(int m)          // m points strictly inside (-1,1)
+/**
+ * \brief  Equispaced points strictly inside \f$(-1,1)\f$, from -0.995 to 0.995.
+ * \param[in] m  number of points, \f$m \ge 2\f$
+ * \return    the points
+ */
+std::vector<double> interior_points(int m)
 {
     std::vector<double> x(m);
     for (int i = 0; i < m; ++i) x[i] = -0.995 + 1.99 * i / (m - 1);
@@ -58,6 +102,10 @@ std::vector<double> interior_points(int m)          // m points strictly inside 
 
 } // namespace
 
+/**
+ * \brief  Run all tests and print a PASS/FAIL report.
+ * \return 0 if every check passes, 1 otherwise.
+ */
 int main()
 {
     const std::vector<double> x = interior_points(41);

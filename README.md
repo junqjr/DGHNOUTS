@@ -22,6 +22,7 @@ AMD GPUs (Jean-Zay, Adastra, Alice Recoque) and on CPUs.
 - [Requirements](#requirements)
 - [Building](#building)
 - [Testing](#testing)
+- [Documentation](#documentation)
 - [Choosing the compiler](#choosing-the-compiler)
 - [The Jacobi module](#the-jacobi-module)
 - [References](#references)
@@ -54,6 +55,11 @@ AMD GPUs (Jean-Zay, Adastra, Alice Recoque) and on CPUs.
 dghnouts/
 ├── CMakeLists.txt        build definition, compiler-specific flags
 ├── CMakePresets.json     one preset per compiler (gcc, nvhpc, intel, clang, gcc-debug)
+├── docs/
+│   ├── Doxyfile          Doxygen configuration (API reference)
+│   ├── mainpage.md       front page of the API reference
+│   └── theory/
+│       └── dghnouts_theory.tex   mathematical documentation (LaTeX)
 ├── include/
 │   └── jacobi.hpp        public interface of the Jacobi module
 ├── src/
@@ -102,6 +108,27 @@ cmake --preset gcc -DPOLYLIB_DIR=/path/to/polylib
 ```
 
 Polylib is used only as a reference in the tests; it is never part of the library.
+
+## Documentation
+
+Two complementary documents:
+
+- **Theory** (`docs/theory/dghnouts_theory.tex`): the mathematics of every
+  routine, in the notation and equation numbering of Karniadakis & Sherwin.
+- **API reference** (Doxygen): generated from the comments in the code. Each
+  routine states the equation it implements and links to the theory PDF.
+
+Both are built by one target:
+
+```bash
+cmake --preset gcc
+cmake --build --preset gcc --target doc
+# open build/gcc/doc/html/index.html
+```
+
+Requirements: Doxygen ≥ 1.9 and a LaTeX installation with `latexmk`, `dvips` and
+Ghostscript (`gs`). Formulas are rendered offline, so the pages can be read
+without an internet connection. Graphviz (`dot`) is optional and adds call graphs.
 
 ## Choosing the compiler
 

@@ -68,3 +68,44 @@ else()
 endif()
 
 add_test(NAME jacobi COMMAND test_jacobi)
+
+# ---------------------------------------------------------------------------
+# Documentation:  cmake --build --preset gcc --target doc
+#   HTML API documentation (Doxygen) in <build>/doc/html, with the theory PDF
+#   (docs/theory, built with latexmk if available) copied next to it so that
+#   the \theorypdf links in the code comments work.
+# ---------------------------------------------------------------------------
+find_package(Doxygen QUIET)
+find_program(LATEXMK_EXECUTABLE latexmk)
+
+if(DOXYGEN_FOUND)
+  set(DOC_DIR "${CMAKE_BINARY_DIR}/doc")
+  if(DOXYGEN_DOT_FOUND)
+    set(DOC_HAVE_DOT YES)
+  else()
+    set(DOC_HAVE_DOT NO)
+  endif()
+
+  set(DOC_COMMANDS
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DOC_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E env DGHNOUTS_DOC_DIR=${DOC_DIR} DGHNOUTS_HAVE_DOT=${DOC_HAVE_DOT}
+            ${DOXYGEN_EXECUTABLE} docs/Doxyfile)
+
+  if(LATEXMK_EXECUTABLE)
+    list(APPEND DOC_COMMANDS
+      COMMAND ${LATEXMK_EXECUTABLE} -pdf -interaction=nonstopmode -halt-on-error -quiet
+              -output-directory=${DOC_DIR}/theory
+              ${CMAKE_SOURCE_DIR}/docs/theory/dghnouts_theory.tex
+      COMMAND ${CMAKE_COMMAND} -E copy ${DOC_DIR}/theory/dghnouts_theory.pdf ${DOC_DIR}/html/)
+  else()
+    message(STATUS "latexmk not found: 'doc' builds the HTML only, without the theory PDF")
+  endif()
+
+  add_custom_target(doc ${DOC_COMMANDS}
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Building documentation in ${DOC_DIR}/html (open index.html)"
+    VERBATIM)
+else()
+  message(STATUS "Doxygen not found: 'doc' target not available")
+endif()
+
