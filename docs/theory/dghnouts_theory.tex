@@ -42,7 +42,7 @@
 
 \title{\textbf{DGHNOUTS}\\[0.3em]
   \large Mathematical documentation of the spectral/$hp$ library\\[0.2em]
-  \normalsize Part~I: Jacobi polynomials}
+  \normalsize Part~I: Jacobi polynomials \quad Part~II: Gauss quadrature}
 \author{Carlos Junqueira Junior\\ \small DynFluid, Arts et M\'etiers -- ENSAM}
 \date{\today}
 
@@ -55,8 +55,10 @@ DGHNOUTS spectral/$hp$ library, the equation each one implements, and the
 identities used to test it. Notation and equation numbers follow Karniadakis
 and Sherwin~\cite{KS2005}: an equation taken from the book keeps its number,
 for example~(A.1.3); an equation that is not in the book, derived here, is
-numbered (D.1), (D.2), \dots\ The document grows with the code; this part
-covers the module \code{include/jacobi.hpp}.
+numbered (D.1), (D.2), \dots\ The document grows with the code. Part~I
+covers the Jacobi polynomials and Part~II the Gauss quadrature rules built on
+them, starting with the zeros of the Jacobi polynomials; both are implemented
+in the module \code{include/jacobi.hpp}.
 \end{abstract}
 
 \tableofcontents
@@ -150,6 +152,8 @@ quadruple precision on Arm processors such as Rhea or Grace
 (software-emulated, slower); it can be used to compute high-order nodes and
 weights to full \code{double} accuracy.
 
+% ===========================================================================
+\part{Jacobi polynomials}
 % ===========================================================================
 \section{Jacobi polynomials}
 \label{sec:jacobi}
@@ -330,13 +334,17 @@ Function & Computes & Equation \\
 \midrule
 \code{T jacobi\_deriv(n, alpha, beta, xi)} & $\bigl[\Pab{n}\bigr]'(\xi)$ & (A.1.8) \\
 \code{void jacobi\_deriv(n, alpha, beta, xi, np, dp)} & $\bigl[\Pab{n}\bigr]'(\xi_i)$ & (A.1.8) \\
+\code{void jacobi\_and\_deriv(n, alpha, beta,} & $\Pab{n}(\xi)$ and & (A.1.3), \eqref{eq:deriv-rec} \\
+\quad\code{xi, p, dp)} & $\bigl[\Pab{n}\bigr]'(\xi)$, one point & \\
 \code{void jacobi\_and\_deriv(n, alpha, beta,} & $\Pab{n}(\xi_i)$ and & (A.1.3), \eqref{eq:deriv-rec} \\
 \quad\code{xi, np, p, dp)} & $\bigl[\Pab{n}\bigr]'(\xi_i)$ & \\
 \bottomrule
 \end{tabular}
 \end{center}
-In \code{jacobi\_and\_deriv}, either output pointer may be \code{nullptr}
-when only one of the two results is needed.
+In the array version of \code{jacobi\_and\_deriv}, either output pointer may
+be \code{nullptr} when only one of the two results is needed. The single-point
+version is what the Newton iteration of Section~\ref{sec:zeros} evaluates at
+every step.
 
 % ===========================================================================
 \subsection{All degrees at once: the generalised Vandermonde matrix}
@@ -473,8 +481,9 @@ which checks that the derivative is correct exactly where~(A.1.4) fails.
 \code{jacobi\_all}, must agree with the single-point routines to the last bit
 (they perform the same operations). \code{jacobi\_and\_deriv} must agree to
 $10^{-12}$, since its derivative comes from~\eqref{eq:deriv-rec} rather
-than~(A.1.8), and must give bitwise the same results when one of its outputs
-is \code{nullptr}.
+than~(A.1.8), must give bitwise the same results when one of its outputs
+is \code{nullptr}, and its single-point version must agree bitwise with the
+array version.
 
 \paragraph{Precision.}
 The values, derivatives and norms in \code{float} and \code{double} are
@@ -503,13 +512,224 @@ Test & Identity & Functions checked & Tolerance \\
 5 & (A.1.7) & \code{jacobi}, \code{jacobi\_norm2} & $10^{-12}$ \\
 6 & (A.1.1) & \code{jacobi}, \code{jacobi\_deriv} & $10^{-11}$ \\
 7 & $L_n'(1)=n(n+1)/2$ & \code{jacobi\_deriv} & $10^{-13}$ \\
-8 & array vs.\ single point, \code{nullptr} & all array routines & $0$ / $10^{-12}$ \\
+8 & array vs.\ single point, \code{nullptr} & all array routines, & $0$ / $10^{-12}$ \\
+  & & one-pass \code{jacobi\_and\_deriv} & \\
 9 & \code{float}, \code{double} vs.\ \code{long double} & all routines & Table~\ref{tab:precision} \\
 \bottomrule
 \end{tabular}
 \end{center}
 Tests 1, 2 and 5 require Polylib. Errors are relative, with a floor of $1$
 so that values close to zero are compared absolutely.
+
+% ===========================================================================
+\part{Gauss quadrature}
+% ===========================================================================
+\section{Zeros of Jacobi polynomials}
+\label{sec:zeros}
+% ===========================================================================
+
+\subsection{The nodes of the Gauss-type rules}
+
+A Gauss-type rule with $Q$ points approximates
+$\int_{-1}^{1}(1-\xi)^\alpha(1+\xi)^\beta u(\xi)\,\dd\xi$ by
+$\sum_{i=0}^{Q-1} w_i\,u(\xi_i)$. Appendix~B.1 of the book shows that the
+nodes $\xi_i$ of all three families are zeros of a Jacobi polynomial, with
+parameters shifted when end points are imposed:
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Rule ($Q$ points) & Nodes $\xi_i$ & Exact up to degree \\
+\midrule
+Gauss--Jacobi  & zeros of $\Pab{Q}$ & $2Q-1$ \\
+Gauss--Radau--Jacobi & $-1$ and the zeros of $\Jac{Q-1}{\alpha}{\beta+1}$ & $2Q-2$ \\
+Gauss--Lobatto--Jacobi & $\pm1$ and the zeros of $\Jac{Q-2}{\alpha+1}{\beta+1}$ & $2Q-3$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+One routine computing the zeros $\xi^{\alpha,\beta}_{i,m}$ of $\Pab{m}$,
+\begin{equation*}
+  \Pab{m}\bigl(\xi^{\alpha,\beta}_{i,m}\bigr) = 0, \qquad i = 0,\dots,m-1,
+\end{equation*}
+therefore gives the nodes of every rule. The weights, which have closed forms
+in terms of the nodes, are the subject of the next section.
+
+For $\alpha,\beta>-1$ the $m$ zeros of $\Pab{m}$ are real, simple and lie in
+$(-1,1)$, and the zeros of $\Pab{m}$ and $\Pab{m+1}$ interlace~\cite{Szego1939}:
+\begin{equation*}
+  \xi_{i,m+1} < \xi_{i,m} < \xi_{i+1,m+1}, \qquad i = 0,\dots,m-1.
+\end{equation*}
+Except for the Chebyshev polynomials, they have no closed form and are computed
+iteratively.
+
+\subsection{Newton--Raphson with polynomial deflation}
+
+Following Appendix~B.2, the zeros are found one after the other by Newton's
+method. To make sure that each search finds a new zero, the zeros
+$\xi_0,\dots,\xi_{k-1}$ already found are divided out of the polynomial
+(\emph{deflation}): zero $k$ is sought as a zero of
+\begin{equation*}
+  f_{m-k}(\xi) = \frac{\Pab{m}(\xi)}{\prod_{j=0}^{k-1}(\xi-\xi_j)}.
+\end{equation*}
+Taking the logarithmic derivative,
+\begin{equation*}
+  \frac{f_{m-k}'}{f_{m-k}} = \frac{\bigl[\Pab{m}\bigr]'}{\Pab{m}} - \sum_{j=0}^{k-1}\frac{1}{\xi-\xi_j},
+\end{equation*}
+so the Newton step $\delta = -f_{m-k}/f_{m-k}'$ at the current iterate $r$ is
+\begin{equation}
+  \delta = -\frac{\Pab{m}(r)}{\bigl[\Pab{m}\bigr]'(r) - \Pab{m}(r)\,\displaystyle\sum_{j=0}^{k-1}\frac{1}{r-\xi_j}},
+  \qquad r \leftarrow r+\delta.
+  \dgtag\label{eq:newton}
+\end{equation}
+The product $\prod_j(\xi-\xi_j)$ is never formed: only $\Pab{m}$, its
+derivative and the sum $s=\sum_j 1/(r-\xi_j)$ are needed. $\Pab{m}(r)$ and
+$[\Pab{m}]'(r)$ come from one pass of~(A.1.3) and~\eqref{eq:deriv-rec}
+(the single-point \code{jacobi\_and\_deriv}); the book uses~(A.1.4) for the
+derivative, which is equivalent here since the zeros lie inside $(-1,1)$.
+
+\paragraph{Initial guess.}
+The zeros of the Chebyshev polynomial ($\alpha=\beta=-\tfrac12$) are explicit,
+and close to those of the other Jacobi polynomials for moderate $\alpha,\beta$.
+The book takes them as starting points, averaged with the previous zero:
+\begin{equation}
+  r^{(0)}_k = -\cos\Bigl(\frac{2k+1}{2m}\pi\Bigr),
+  \qquad
+  r^{(0)}_k \leftarrow \tfrac12\bigl(r^{(0)}_k + \xi_{k-1}\bigr) \quad (k>0).
+  \dgtag\label{eq:guess}
+\end{equation}
+For Chebyshev polynomials the first guess is already the zero and Newton
+returns at once.
+
+\paragraph{Stopping criterion.}
+The book stops when $\delta<\epsilon$ for a given tolerance $\epsilon$; the
+absolute value is meant. Since the zeros satisfy $|\xi|<1$, an absolute
+tolerance is also a relative one, and the smallest meaningful value is a few
+times the machine epsilon $\varepsilon$ of the arithmetic:
+\begin{equation}
+  |\delta| \le 4\varepsilon,
+  \qquad
+  \varepsilon = 2^{-23},\ 2^{-52},\ 2^{-63}
+  \ \text{for \code{float}, \code{double}, \code{long double} (x86)}.
+  \dgtag\label{eq:stop}
+\end{equation}
+A tolerance below the round-off level could never be met.
+
+\subsection{Additions to the book's algorithm}
+
+Testing the algorithm far beyond the parameters used in DG, up to
+$\alpha,\beta=100$ and $m=60$ in three precisions, led to four additions.
+
+\paragraph{Reflection.}
+By the symmetry~(A.1.6), $\Pab{m}(-\xi)=(-1)^m\Jac{m}{\beta}{\alpha}(\xi)$, so
+\begin{equation}
+  \xi^{\alpha,\beta}_{i,m} = -\,\xi^{\beta,\alpha}_{m-1-i,m}, \qquad i=0,\dots,m-1.
+  \dgtag\label{eq:reflection}
+\end{equation}
+When $\alpha>\beta$ the zeros crowd towards $\xi=-1$, which is where the
+search starts. There, Newton failed for large $\alpha-\beta$ (for example
+$(\alpha,\beta)=(10,0)$ at $m=49$ or $(21,0)$ at $m=33$), whereas the mirror
+problem $(\beta,\alpha)$ never failed. For $\alpha>\beta$ the zeros of
+$\Jac{m}{\beta}{\alpha}$ are therefore computed and reflected
+with~\eqref{eq:reflection}.
+
+\paragraph{Exact symmetry for $\alpha=\beta$.}
+Then $\Pab{m}$ has the parity of $m$ and its zeros are symmetric. Newton
+returns them symmetric only up to round-off, so they are symmetrised,
+\begin{equation*}
+  \xi_i \leftarrow \tfrac12\bigl(\xi_i-\xi_{m-1-i}\bigr),\qquad
+  \xi_{m-1-i} = -\xi_i,\qquad
+  \xi_{(m-1)/2}=0 \ \text{for odd } m,
+\end{equation*}
+so that a symmetric rule integrates odd functions to exactly zero.
+
+\paragraph{Iteration limit.}
+For DG parameters Newton needs at most 11 iterations per zero. When the initial
+guess is far from the zero, for instance for $\alpha=\beta=20$, Newton first
+approaches it slowly, by roughly $1/m$ of the distance per step, and up to
+about 170 iterations were needed. The limit is set to 1000.
+
+\paragraph{Certification.}
+Newton's convergence shows that each $\xi_k$ is a zero of the deflated
+function, but a zero found twice and one missed would go unnoticed. Let
+\begin{equation*}
+  c_0 = -1,\qquad c_i = \tfrac12(\xi_{i-1}+\xi_i)\ (i=1,\dots,m-1),\qquad c_m = 1,
+\end{equation*}
+so that the computed zero $\xi_i$ lies in $(c_i,c_{i+1})$. The routine requires
+\begin{equation}
+  \operatorname{sign}\Pab{m}(c_i) \neq \operatorname{sign}\Pab{m}(c_{i+1}),
+  \qquad i=0,\dots,m-1.
+  \dgtag\label{eq:certify}
+\end{equation}
+Each of the $m$ disjoint intervals then contains an odd number of true zeros;
+since $\Pab{m}$ has exactly $m$ zeros, each contains exactly one. Every true
+zero is thus matched with exactly one computed zero. If~\eqref{eq:certify}
+fails, including through overflow in single precision, the routine raises an
+exception instead of returning wrong zeros. The cost is $m+1$ evaluations of
+$\Pab{m}$, negligible next to the Newton iterations.
+
+\subsection{Accuracy and range}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+& DG parameters, $|\alpha|,|\beta|\le2$ & $\alpha,\beta$ up to 100 \\
+\midrule
+\code{double} vs.\ \code{long double} & $1.6\times10^{-16}$ & $1.1\times10^{-16}$ \\
+\code{float} vs.\ \code{long double}  & $7.4\times10^{-8}$  & exception in some cases \\
+Polylib (eigenvalues) vs.\ \code{double} & $1.1\times10^{-15}$ & -- \\
+\bottomrule
+\end{tabular}
+\caption{Largest absolute errors of the zeros, $m\le60$ ($m\le40$ for
+Polylib). An error of $1.1\times10^{-16}$ is one unit in the last place
+at $|\xi|\approx1$.}
+\label{tab:zeros}
+\end{table}
+
+In \code{double} the zeros are correct to one or two units in the last place,
+about seven times more accurate than Polylib's eigenvalue method. In
+\code{float}, the zeros are accurate to one or two units in the last place for
+the DG parameters. For large parameters, such as $\alpha=\beta\ge5$ with
+$m>40$ or $\beta=100$, the values of $\Pab{m}$ approach the range of single
+precision; the routine then raises \code{std::runtime\_error}, and the
+zeros should be computed in \code{double} and rounded.
+
+\begin{center}
+\begin{tabular}{@{}l>{\raggedright\arraybackslash}p{0.36\textwidth}@{}}
+\toprule
+Function & Computes \\
+\midrule
+\code{void jacobi\_zeros(m, alpha, beta, z)} & $z_i=\xi^{\alpha,\beta}_{i,m}$, increasing, array of size $m$ \\
+\code{std::vector<T> jacobi\_zeros<T>(m, alpha, beta)} & same, in a vector; \code{T} = \code{double} by default \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Verification}
+
+The program \code{tests/test\_zeros.cpp} checks, for $m\le60$ and the
+parameter pairs $(0,0)$, $(1,1)$, $(0,1)$, $(1,0)$, $(2,0)$,
+$(-\tfrac12,-\tfrac12)$, $(\tfrac12,\tfrac12)$, $(\tfrac12,\tfrac32)$,
+$(0.3,-0.7)$ and $(-0.9,-0.9)$:
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Test & Check & Tolerance \\
+\midrule
+1 & $m$ zeros, increasing, in $(-1,1)$; pointer and vector versions agree & exact \\
+2 & Legendre $m\le4$; GLL interior points $Q=5$: $0,\pm\sqrt{3/7}$; & $4\times10^{-16}$ \\
+  & Chebyshev $T_m$: $-\cos\frac{(2i+1)\pi}{2m}$; $U_m$: $-\cos\frac{(i+1)\pi}{m+1}$ & \\
+3 & symmetry for $\alpha=\beta$; reflection~\eqref{eq:reflection} & exact \\
+4 & interlacing of the zeros of $\Pab{m}$ and $\Pab{m+1}$ & exact \\
+5 & \code{double}, \code{float} vs.\ \code{long double} & $5\times10^{-16}$, $2\times10^{-7}$ \\
+6 & $\alpha,\beta$ up to 100: no failure in \code{double}; & $5\times10^{-16}$ \\
+  & \code{float} accurate or exception, never wrong & \\
+7 & invalid arguments rejected & -- \\
+8 & Polylib's Gauss--Jacobi points (optional) & $10^{-14}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The closed-form references of test~2 are evaluated in \code{long double}, so
+that their own rounding does not count as an error.
 
 % ===========================================================================
 \appendix
@@ -533,12 +753,18 @@ Signature & Result & Equation \\
   & $p_i=\Pab{n}(\xi_i)$ & (A.1.3) \\
 \code{void jacobi\_deriv(int n, double alpha, double beta, const T* xi, std::size\_t np, T* dp)}
   & $dp_i=\bigl[\Pab{n}\bigr]'(\xi_i)$ & (A.1.8) \\
+\code{void jacobi\_and\_deriv(int n, double alpha, double beta, T xi, T\& p, T\& dp)}
+  & $\Pab{n}(\xi)$ and $\bigl[\Pab{n}\bigr]'(\xi)$ in one pass & (A.1.3), \eqref{eq:deriv-rec} \\
 \code{void jacobi\_and\_deriv(int n, double alpha, double beta, const T* xi, std::size\_t np, T* p, T* dp)}
   & $p_i$ and $dp_i$ in one pass & (A.1.3), \eqref{eq:deriv-rec} \\
 \code{void jacobi\_all(int nmax, double alpha, double beta, const T* xi, std::size\_t np, T* V)}
   & $\mathbf{V}_{ik}=\Pab{k}(\xi_i)$, row-major & \eqref{eq:vandermonde} \\
 \code{T jacobi\_norm2<T = double>(int n, double alpha, double beta)}
   & $h_n^{\alpha,\beta}$ & (A.1.7), \eqref{eq:h0} \\
+\code{void jacobi\_zeros(int m, double alpha, double beta, T* z)}
+  & zeros $\xi^{\alpha,\beta}_{i,m}$ of $\Pab{m}$, increasing & \eqref{eq:newton}--\eqref{eq:certify} \\
+\code{std::vector<T> jacobi\_zeros<T = double>(int m, double alpha, double beta)}
+  & same, in a vector & \eqref{eq:newton}--\eqref{eq:certify} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -551,6 +777,10 @@ resize the output to the size of \code{xi} and call the pointer versions.
   G.~Karniadakis and S.~Sherwin,
   \emph{Spectral/hp Element Methods for Computational Fluid Dynamics},
   2nd ed., Oxford University Press, 2005.
+\bibitem{Szego1939}
+  G.~Szeg\H{o},
+  \emph{Orthogonal Polynomials},
+  American Mathematical Society Colloquium Publications~23, 1939.
 \bibitem{AS1964}
   M.~Abramowitz and I.~A.~Stegun,
   \emph{Handbook of Mathematical Functions}, Chapter~22,

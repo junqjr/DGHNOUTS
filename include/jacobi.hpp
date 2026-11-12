@@ -9,7 +9,7 @@
  *          standard-element coordinate written \f$\xi\f$ as in the book's Chapter 2
  *          (Appendix A writes \f$x\f$). Equations derived in DGHNOUTS (not in the
  *          book) are numbered (D.n) and are given in the theory document
- *          \theorypdf, Part I.
+ *          \theorypdf, Parts I and II.
  *
  *          | Function               | Computes                                     | Equation       | Theory |
  *          |------------------------|----------------------------------------------|----------------|--------|
@@ -18,6 +18,7 @@
  *          | dg::jacobi_and_deriv() | both, in one pass                            | (A.1.3), (D.2) | Sec. 2.3 |
  *          | dg::jacobi_all()       | \f$P_0,\dots,P_N\f$ (Vandermonde)           | (D.4)          | Sec. 2.4 |
  *          | dg::jacobi_norm2()     | \f$h_n^{\alpha,\beta}\f$                    | (A.1.7), (D.5) | Sec. 2.5 |
+ *          | dg::jacobi_zeros()     | zeros \f$\xi_{i,m}^{\alpha,\beta}\f$ of \f$P_m^{\alpha,\beta}\f$ | B.2, (D.7)–(D.11) | Sec. 4 |
  *
  *          **Conventions** (all functions):
  *          - namespace `dg`; the standard-element coordinate is `xi` (\f$\xi\f$);
@@ -172,6 +173,37 @@ T jacobi(int n, double alpha, double beta, T xi);
  */
 template <typename T>
 T jacobi_deriv(int n, double alpha, double beta, T xi);
+
+/**
+ * \brief Value and derivative of \f$P_n^{\alpha,\beta}\f$ at one point, in one pass.
+ *
+ * Runs the recurrence (A.1.3) for the value together with its
+ * \f$\xi\f$-derivative (D.2), started with (D.3):
+ * \f[
+ *   a_n^1\,\bigl[P_{n+1}^{\alpha,\beta}\bigr]'
+ *   = a_n^3\,P_n^{\alpha,\beta}
+ *   + \bigl(a_n^2 + a_n^3 \xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'
+ *   - a_n^4\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]'.
+ * \f]
+ * This is what the Newton iteration of jacobi_zeros() evaluates at every
+ * step: one recurrence instead of two (jacobi() and jacobi_deriv()).
+ * The results are bitwise identical to the array version of
+ * jacobi_and_deriv() at the same point. Valid at \f$\xi=\pm1\f$.
+ *
+ * \tparam     T      floating-point type: `float`, `double` or `long double`
+ * \param[in]  n      degree, \f$n \ge 0\f$
+ * \param[in]  alpha  weight parameter \f$\alpha > -1\f$
+ * \param[in]  beta   weight parameter \f$\beta > -1\f$
+ * \param[in]  xi     evaluation point \f$\xi\f$
+ * \param[out] p      \f$P_n^{\alpha,\beta}(\xi)\f$
+ * \param[out] dp     \f$\frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ *
+ * \par Theory
+ * \theorypdf, Section 2.3, Eqs. (A.1.3), (D.2) and (D.3).
+ */
+template <typename T>
+void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp);
 
 /// @}
 
@@ -401,6 +433,102 @@ void jacobi_deriv(int n, double alpha, double beta,
  */
 template <typename T = double>
 T jacobi_norm2(int n, double alpha, double beta);
+
+/// @}
+
+// ===========================================================================
+/// \name Zeros
+/// @{
+// ===========================================================================
+
+/**
+ * \brief Zeros \f$\xi_{0,m}^{\alpha,\beta} < \dots < \xi_{m-1,m}^{\alpha,\beta}\f$
+ *        of \f$P_m^{\alpha,\beta}\f$: the nodes of the Gauss-type quadrature rules.
+ *
+ * The \f$m\f$ zeros are real, simple and lie in \f$(-1,1)\f$. They give the
+ * nodes of every Gauss-type rule with \f$Q\f$ points (Appendix B.1):
+ *
+ * | Rule           | Nodes \f$\xi_i\f$                                                     |
+ * |----------------|-------------------------------------------------------------------------|
+ * | Gauss–Jacobi   | zeros of \f$P_Q^{\alpha,\beta}\f$                                      |
+ * | Gauss–Radau    | \f$-1\f$ and the zeros of \f$P_{Q-1}^{\alpha,\beta+1}\f$               |
+ * | Gauss–Lobatto  | \f$\pm1\f$ and the zeros of \f$P_{Q-2}^{\alpha+1,\beta+1}\f$           |
+ *
+ * \par Algorithm (Appendix B.2)
+ * Newton–Raphson with polynomial deflation. Root \f$k\f$ is found by applying
+ * Newton to \f$f_{m-k}(\xi) = P_m(\xi)/\prod_{j<k}(\xi-\xi_j)\f$, so that the
+ * roots already found are divided out; the Newton step is (D.7)
+ * \f[
+ *   \delta = -\frac{P_m(r)}{P_m'(r) - P_m(r)\sum_{j=0}^{k-1}\frac{1}{r-\xi_j}},
+ *   \qquad r \leftarrow r + \delta .
+ * \f]
+ * The initial guess (D.8) is the Chebyshev zero
+ * \f$-\cos\bigl(\tfrac{2k+1}{2m}\pi\bigr)\f$, averaged with the previous root
+ * \f$\xi_{k-1}\f$ for \f$k>0\f$, as recommended in the book.
+ * \f$P_m\f$ and \f$P_m'\f$ come from one pass of (A.1.3) and (D.2).
+ * Root \f$k\f$ is accepted when \f$|\delta| \le 4\varepsilon\f$ (D.9), with
+ * \f$\varepsilon\f$ the machine epsilon of `T`; since \f$|\xi|<1\f$ this is a
+ * relative criterion.
+ *
+ * \par Additions to the book's algorithm
+ * - **Reflection (D.10).** For \f$\alpha>\beta\f$ the zeros crowd towards
+ *   \f$\xi=-1\f$, where the search starts, and Newton can fail. By (A.1.6) the
+ *   zeros of \f$P_m^{\alpha,\beta}\f$ are the negated zeros of
+ *   \f$P_m^{\beta,\alpha}\f$, which are computed instead.
+ * - **Exact symmetry.** For \f$\alpha=\beta\f$ the zeros are made exactly
+ *   symmetric, \f$\xi_{m-1-i}=-\xi_i\f$, and \f$\xi_{(m-1)/2}=0\f$ for odd
+ *   \f$m\f$, so that odd functions are integrated to exactly zero.
+ * - **Certification (D.11).** \f$P_m\f$ must change sign between consecutive
+ *   points of \f$-1\f$, the midpoints of consecutive zeros, and \f$+1\f$. These
+ *   \f$m\f$ sign changes prove that each computed zero sits alone in its own
+ *   interval: none was missed or found twice. A failure raises an exception
+ *   instead of returning wrong zeros.
+ * - The iteration limit is 1000. DG parameters need at most 11 iterations;
+ *   far from the Chebyshev guess (e.g. \f$\alpha=\beta=20\f$) Newton first
+ *   creeps towards the root and needs up to about 170.
+ *
+ * \par Accuracy and range (measured, \f$m \le 60\f$)
+ * - `double`: within \f$2\times10^{-16}\f$ of the `long double` zeros (1–2 ulp)
+ *   for \f$\alpha,\beta\f$ up to 100; Polylib's eigenvalue method agrees only
+ *   to \f$10^{-15}\f$.
+ * - `long double`: no failure in the same range.
+ * - `float`: within \f$10^{-7}\f$ (1–2 ulp) for the DG parameters
+ *   \f$|\alpha|,|\beta|\le2\f$. For large parameters (e.g. \f$\alpha=\beta\ge5\f$
+ *   with \f$m>40\f$, or \f$\beta=100\f$) it raises `std::runtime_error`; compute
+ *   in `double` and round instead.
+ *
+ * \tparam     T      floating-point type: `float`, `double` or `long double`
+ * \param[in]  m      degree of \f$P_m^{\alpha,\beta}\f$ = number of zeros, \f$m \ge 0\f$
+ * \param[in]  alpha  weight parameter \f$\alpha > -1\f$
+ * \param[in]  beta   weight parameter \f$\beta > -1\f$
+ * \param[out] z      the \f$m\f$ zeros in increasing order, array of size `m`
+ * \throws     std::invalid_argument if \f$m<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::runtime_error if Newton does not converge for a zero, or if
+ *             the certification (D.11) fails; this happens only in `float`
+ *             beyond the DG parameter range
+ *
+ * \par Theory
+ * \theorypdf, Section 4, Eqs. (D.7)–(D.11), and Karniadakis & Sherwin,
+ * Appendix B.2.
+ */
+template <typename T>
+void jacobi_zeros(int m, double alpha, double beta, T* z);
+
+/**
+ * \brief Zeros of \f$P_m^{\alpha,\beta}\f$, returned in a `std::vector`.
+ *
+ * Convenience overload of jacobi_zeros(int, double, double, T*). The type is
+ * `double` unless requested explicitly, e.g. `jacobi_zeros<long double>(m, a, b)`.
+ *
+ * \tparam    T      floating-point type, `double` by default
+ * \param[in] m      number of zeros, \f$m \ge 0\f$
+ * \param[in] alpha  weight parameter \f$\alpha > -1\f$
+ * \param[in] beta   weight parameter \f$\beta > -1\f$
+ * \return    the \f$m\f$ zeros in increasing order
+ * \throws    see jacobi_zeros(int, double, double, T*)
+ */
+template <typename T = double>
+std::vector<T> jacobi_zeros(int m, double alpha, double beta);
 
 /// @}
 

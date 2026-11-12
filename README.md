@@ -34,7 +34,7 @@ AMD GPUs (Jean-Zay, Adastra, Alice Recoque) and on CPUs.
 **Spectral/hp library** (plain C++17, CPU; runs once at start-up)
 
 - [x] Jacobi polynomials P<sub>n</sub><sup>(α,β)</sup>: values, derivatives, norms
-- [ ] Zeros of Jacobi polynomials
+- [x] Zeros of Jacobi polynomials (nodes of the Gauss-type rules)
 - [ ] Gauss, Gauss–Radau and Gauss–Lobatto quadrature (Jacobi weights)
 - [ ] Lagrange interpolation and differentiation matrices
 - [ ] Vandermonde matrices (nodal ↔ modal), modal filters
@@ -65,7 +65,9 @@ dghnouts/
 ├── src/
 │   └── jacobi.cpp        implementation
 └── tests/
-    └── test_jacobi.cpp   unit tests against the identities of Appendix A
+    ├── test_utils.hpp    PASS/FAIL helpers shared by the tests
+    ├── test_jacobi.cpp   Jacobi polynomials against the identities of Appendix A
+    └── test_zeros.cpp    zeros: closed forms, symmetry, interlacing, precision
 ```
 
 ## Requirements
@@ -91,13 +93,17 @@ configurations can coexist. `cmake --list-presets` shows all of them.
 ## Testing
 
 ```bash
-ctest --preset gcc            # or run the test executable directly:
+ctest --preset gcc            # or run a test executable directly:
 ./build/gcc/test_jacobi
+./build/gcc/test_zeros
 ```
 
-The tests check the Jacobi module against the identities of Appendix A.1 of
-Karniadakis & Sherwin (end-point values, symmetry, the Sturm–Liouville equation,
-derivatives at x = ±1), and the array routines against the single-point ones.
+`test_jacobi` checks the Jacobi polynomials against the identities of Appendix
+A.1 of Karniadakis & Sherwin (end-point values, symmetry, the Sturm–Liouville
+equation, derivatives at ξ = ±1), the array routines against the single-point
+ones, and the three precisions against each other. `test_zeros` checks the
+zeros against closed forms (Legendre, Chebyshev, Gauss–Lobatto), symmetry,
+interlacing, `long double` references, and parameters up to α, β = 100.
 
 **Optional: comparison with Polylib.** If you have Polylib (`polylib.cpp` and
 `polylib.h`, distributed with the book), point CMake at its folder to enable the
@@ -148,20 +154,32 @@ caches the compiler on the first configure.
 
 ## The Jacobi module
 
-`include/jacobi.hpp`, namespace `dg`. Requires n ≥ 0 and α, β > −1.
+`include/jacobi.hpp`, namespace `dg`. Requires n ≥ 0 and α, β > −1. The
+standard-element coordinate is ξ (`xi`), as in Karniadakis & Sherwin, Chapter 2.
 
-| Function | Computes | Book equation |
+| Function | Computes | Book / theory equation |
 |---|---|---|
-| `jacobi(n, a, b, x)` | P<sub>n</sub><sup>(α,β)</sup>(x) | recurrence (A.1.3) |
-| `jacobi_deriv(n, a, b, x)` | dP<sub>n</sub><sup>(α,β)</sup>/dx | (A.1.8), valid at x = ±1 |
-| `jacobi(n, a, b, x, np, p)` | P<sub>n</sub> at np points | (A.1.3), vectorised over points |
-| `jacobi_deriv(n, a, b, x, np, dp)` | P′<sub>n</sub> at np points | (A.1.8) |
-| `jacobi_and_deriv(n, a, b, x, np, p, dp)` | P<sub>n</sub> and P′<sub>n</sub> in one pass | (A.1.3) and its x-derivative |
-| `jacobi_all(nmax, a, b, x, np, V)` | P<sub>0</sub> … P<sub>nmax</sub> (Vandermonde matrix) | (A.1.3), each degree once |
-| `jacobi_norm2(n, a, b)` | ‖P<sub>n</sub><sup>(α,β)</sup>‖² with the Jacobi weight | (A.1.7), via `std::lgamma` |
+| `jacobi(n, a, b, xi)` | P<sub>n</sub><sup>(α,β)</sup>(ξ) | recurrence (A.1.3) |
+| `jacobi_deriv(n, a, b, xi)` | dP<sub>n</sub><sup>(α,β)</sup>/dξ | (A.1.8), valid at ξ = ±1 |
+| `jacobi_and_deriv(n, a, b, xi, p, dp)` | P<sub>n</sub> and P′<sub>n</sub> at one point, one pass | (A.1.3), (D.2) |
+| `jacobi(n, a, b, xi, np, p)` | P<sub>n</sub> at np points | (A.1.3), vectorised over points |
+| `jacobi_deriv(n, a, b, xi, np, dp)` | P′<sub>n</sub> at np points | (A.1.8) |
+| `jacobi_and_deriv(n, a, b, xi, np, p, dp)` | P<sub>n</sub> and P′<sub>n</sub> at np points, one pass | (A.1.3), (D.2) |
+| `jacobi_all(nmax, a, b, xi, np, V)` | P<sub>0</sub> … P<sub>nmax</sub> (Vandermonde matrix) | (D.4) |
+| `jacobi_norm2(n, a, b)` | ‖P<sub>n</sub><sup>(α,β)</sup>‖² with the Jacobi weight | (A.1.7), (D.5) |
+| `jacobi_zeros(m, a, b, z)` | the m zeros of P<sub>m</sub><sup>(α,β)</sup>, increasing | B.2, (D.7)–(D.11) |
 
-Array routines take raw pointers (`const double* x, std::size_t np`) so they work
-with any contiguous storage. `std::vector` overloads are also provided.
+All functions are templates on the floating-point type, compiled for `float`,
+`double` and `long double`; the type is deduced from `xi`, or given explicitly
+when there is no point argument (`jacobi_norm2<float>(…)`,
+`jacobi_zeros<long double>(m, a, b)`; `double` by default). Array routines take
+raw pointers (`const T* xi, std::size_t np`) so they work with any contiguous
+storage; `std::vector` overloads are also provided.
+
+The zeros give the nodes of every Gauss-type rule with Q points: Gauss–Jacobi,
+zeros of P<sub>Q</sub><sup>(α,β)</sup>; Gauss–Radau, −1 and the zeros of
+P<sub>Q−1</sub><sup>(α,β+1)</sup>; Gauss–Lobatto, ±1 and the zeros of
+P<sub>Q−2</sub><sup>(α+1,β+1)</sup>.
 
 Example:
 
@@ -169,11 +187,14 @@ Example:
 #include "jacobi.hpp"
 #include <vector>
 
-std::vector<double> x = {-1.0, -0.5, 0.0, 0.5, 1.0};
-std::vector<double> p(x.size()), dp(x.size());
+// Gauss-Lobatto-Legendre nodes for Q = 5: -1, -sqrt(3/7), 0, sqrt(3/7), 1
+std::vector<double> xi = dg::jacobi_zeros(3, 1.0, 1.0);   // interior nodes
+xi.insert(xi.begin(), -1.0);
+xi.push_back(1.0);
 
-// Legendre polynomial L_4 and its derivative at all points, in one pass
-dg::jacobi_and_deriv(4, 0.0, 0.0, x.data(), x.size(), p.data(), dp.data());
+// Legendre polynomial L_4 and its derivative at these nodes, in one pass
+std::vector<double> p(xi.size()), dp(xi.size());
+dg::jacobi_and_deriv(4, 0.0, 0.0, xi.data(), xi.size(), p.data(), dp.data());
 ```
 
 ## References
