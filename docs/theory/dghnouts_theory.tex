@@ -227,21 +227,66 @@ $a_n^1,\dots,a_n^4$ exactly as in~(A.1.3). Inside a routine, however,
 \code{rec\_coef(k, alpha, beta)} and produces $\Pab{k+1}$ from $\Pab{k}$ and
 $\Pab{k-1}$, for $k=1,\dots,n-1$.
 
-For $n_p$ points, the array routine runs the degree loop outside and the point
-loop inside:
+\paragraph{Normalised form.}
+Dividing~(A.1.3) by $a_n^1$ once and for all gives
+\begin{equation}
+  \Pab{n+1}(\xi) = \bigl(A_n + B_n\xi\bigr)\Pab{n}(\xi) - C_n\,\Pab{n-1}(\xi),
+  \qquad
+  A_n = \frac{a_n^2}{a_n^1},\quad B_n = \frac{a_n^3}{a_n^1},\quad C_n = \frac{a_n^4}{a_n^1},
+  \tag{A.1.3$'$}
+\end{equation}
+which the code uses everywhere. A step then costs two multiply-adds and a
+multiplication, without division. The coefficients are computed by
+\code{rec\_abc(k, alpha, beta)} as $r=1/a_k^1$ followed by three
+multiplications. The array routines and \code{jacobi\_zeros} store them in a
+table $A_k,B_k,C_k$, $k=1,\dots,n-1$, built once per call (on the stack for
+$n\le128$). The single-point routines compute them on the fly: one division per
+step, off the dependency chain of the recurrence. In the original form the
+new value itself was divided by $a_n^1$, which put the long latency of a
+division on that chain. Accuracy is unchanged
+(Table~\ref{tab:precision} was measured with~(A.1.3$'$)).
+
+\paragraph{Register blocking.}
+Each point needs its own recurrence, so the operation count is $O(n\,n_p)$
+however the loops are ordered. What the loop order decides is where the
+intermediate values live. The array routines take the points in blocks of 32
+and run the whole recurrence on a block before moving to the next:
 \begin{lstlisting}
-for (int k = 1; k < n; ++k) {
-    const RecCoef<T> c = rec_coef(k, a, b);       // once per k
-    for (std::size_t i = 0; i < np; ++i) {        // independent: vectorised
-        const T pkp1 = ((c.a2 + c.a3*xi[i])*p[i] - c.a4*pm1[i]) / c.a1;
-        pm1[i] = p[i];  p[i] = pkp1;
+for each block of 32 points:          // x, P_k, P_{k-1} in SIMD registers
+    for (int k = 1; k < n; ++k) {     // degree: sequential
+        const T Ak = A[k], Bk = B[k], Ck = C[k];
+        for (int i = 0; i < 32; ++i) {          // independent: SIMD
+            const T q = (Ak + Bk*x[i])*pk[i] - Ck*pm[i];
+            pm[i] = pk[i];  pk[i] = q;
+        }
     }
-}
+    write pk[0..31] to the output
 \end{lstlisting}
-Each point still needs its own recurrence, so the operation count is
-$O(n\,n_p)$ as with $n_p$ scalar calls; the gain comes from SIMD
-vectorisation of the inner loop and from computing the coefficients once per
-degree instead of once per point.
+Memory is touched once per point (read $\xi_i$, write the result); the
+intermediate values never leave the registers. An earlier version looped over
+the degree outside and over all $n_p$ points inside, which reads and writes
+two arrays of size $n_p$ at every degree and becomes memory-bound for large
+$n_p$.
+
+\paragraph{Why 32 points: latency.}
+Step $k+1$ of one point needs the result of step $k$: each point's recurrence
+is a dependency chain. A multiply-add has a latency of about 4 cycles, and a
+core can start two per cycle, so about 8 independent SIMD registers must be in
+flight to keep it busy. Thirty-two doubles fill 8 AVX2 registers (4 doubles
+each). With 8 or 16 points per block, the measured time per step was about
+2.5 times longer: the core waited for results. This is the same principle as
+occupancy on a GPU, where many independent threads hide the latency of each.
+
+\paragraph{Fused multiply-add.}
+When the hardware has a fused multiply-add (\code{FP\_FAST\_FMA}, e.g.\ with
+\code{-march=native}, CMake option \code{DGPOLY\_NATIVE=ON}), the steps
+use \code{std::fma}: one operation of 4 cycles instead of a multiplication
+followed by an addition, and one rounding instead of two. It matters most for
+the single-point evaluations of the Newton iteration (Section~\ref{sec:zeros}),
+which form a single chain. Without hardware FMA, plain multiplications and
+additions are used, since \code{std::fma} would call a slow software routine.
+All routines use the same expressions, so on a given machine and build the
+single-point and array versions agree bitwise.
 
 \begin{center}
 \begin{tabular}{@{}ll@{}}
@@ -321,11 +366,17 @@ In exact arithmetic it gives the same derivative as~(A.1.8); in double
 precision the two agree to about $10^{-14}$ relative error for $n\le20$.
 
 \paragraph{Implementation.}
-\code{jacobi\_and\_deriv} keeps four work arrays
-($\Pab{k}$, $\Pab{k-1}$ and their derivatives). For large $n_p$ these arrays
-would be streamed through main memory at every step $k$, which makes the
-routine slower than two separate calls. The points are therefore processed in
-blocks of 256, so that the four arrays stay in the L1 cache for all $n$ steps.
+With the normalised coefficients of~(A.1.3$'$), the derivative recurrence reads
+\begin{equation}
+  \bigl[\Pab{n+1}\bigr]' = B_n\,\Pab{n} + \bigl(A_n + B_n\xi\bigr)\bigl[\Pab{n}\bigr]'
+  - C_n\,\bigl[\Pab{n-1}\bigr]'.
+  \tag{D.2$'$}
+\end{equation}
+\code{jacobi\_and\_deriv} needs four recurrence variables per point
+($\Pab{k}$, $\Pab{k-1}$ and their derivatives). The array version keeps them in
+registers for blocks of 32 points, like \code{jacobi}. An earlier version
+kept them in four arrays in the L1 cache, in blocks of 256 points; register
+blocking is $3.2$ to $3.9$ times faster (Section~\ref{sec:performance}).
 
 \begin{center}
 \begin{tabular}{@{}lll@{}}
@@ -373,6 +424,11 @@ row-major order, one row per point and one column per degree:
 The array \code{V} must hold $n_p(N+1)$ values. Each $\Pab{k}$ is computed
 exactly once, whereas calling \code{jacobi} for each degree
 $k=0,\dots,N$ would repeat the first $k$ steps of the recurrence every time.
+The routine is register-blocked like \code{jacobi}: each block of 32 points
+fills its own rows of $\mathbf{V}$ while they are in the L1 cache. (An earlier
+version wrote $\mathbf{V}$ column by column, touching every row at every
+degree.) For large $n_p$ it is limited by writing its output, $N+1$ values per
+point.
 
 % ===========================================================================
 \subsection{Orthogonality and norm}
@@ -434,6 +490,63 @@ For Legendre, (A.1.7) reduces to $h_n^{0,0}=2/(2n+1)$. For Chebyshev,
 classical value of $\int_{-1}^{1}(1-\xi^2)^{-1/2}\,\dd\xi$.
 
 % ===========================================================================
+\subsection{Performance}
+\label{sec:performance}
+% ===========================================================================
+
+The program \code{bench/bench\_jacobi.cpp} times every routine through the
+public interface (target \code{bench\_jacobi}; it is not a test).
+Table~\ref{tab:perf} compares the implementation described above with the
+earlier one (division in the recurrence, degree loop outside, L1 blocking of
+256 points in \code{jacobi\_and\_deriv}).
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{$n_p=4096$} & \multicolumn{2}{c}{$n_p=10^6$} \\
+\cmidrule(lr){2-3}\cmidrule(l){4-5}
+Routine & before & after & before & after \\
+\midrule
+\code{jacobi} (array)           & 0.65 & 0.19 & 0.93 & 0.16 \\
+\code{jacobi\_deriv} (array)    & 0.50 & 0.11 & 0.87 & 0.10 \\
+\code{jacobi\_and\_deriv} (array) & 1.29 & 0.33 & 1.17 & 0.37 \\
+\code{jacobi\_all}              & 1.18 & 0.55 & 6.07 & 2.31 \\
+\midrule
+& \multicolumn{2}{c}{$m=32$} & \multicolumn{2}{c}{$m=64$} \\
+\cmidrule(lr){2-3}\cmidrule(l){4-5}
+\code{jacobi\_zeros}, GLL ($\mu$s per call) & 61 & 22 & 257 & 80 \\
+\bottomrule
+\end{tabular}
+\caption{Nanoseconds per point and per degree, \code{double}, $n=16$; for
+\code{jacobi\_zeros}, microseconds per call.
+Intel Xeon with AVX-512 and FMA, GCC~13, \code{-O3 -march=native}; best of 5
+repetitions. On this shared machine, differences below about 30\,\% are noise.}
+\label{tab:perf}
+\end{table}
+
+Without \code{-march=native} (SSE2 only, no FMA) the gains are smaller but
+still a factor 1.6 to 3.3 for the array routines and 3 for the zeros. The
+single-point routines and \code{jacobi\_norm2} did not change measurably: a
+single evaluation is one dependency chain, and the norm is six
+\code{lgamma} calls. To evaluate many points, use the array versions.
+
+\paragraph{\code{-march=native} on a cluster.}
+This flag optimises for the processor of the machine that compiles. If a
+login node has a different processor from the compute nodes, the binary can
+fail on the compute nodes with \emph{illegal instruction}. Compile on a
+compute node, or name the target explicitly (e.g.\
+\code{-march=icelake-server}, \code{-march=znver4}).
+
+\paragraph{Relevance.}
+In a DG solver these routines run once, at start-up, on 5 to 30 points: a few
+microseconds, before or after. The gains matter when evaluating at many
+points (interpolation onto fine output grids, plotting, error norms). The
+techniques (loop order, registers before cache, enough independent work to
+hide latency) are the ones the solver kernels will need.
+
+% ===========================================================================
 \section{Verification}
 \label{sec:tests}
 % ===========================================================================
@@ -483,7 +596,8 @@ which checks that the derivative is correct exactly where~(A.1.4) fails.
 $10^{-12}$, since its derivative comes from~\eqref{eq:deriv-rec} rather
 than~(A.1.8), must give bitwise the same results when one of its outputs
 is \code{nullptr}, and its single-point version must agree bitwise with the
-array version.
+array version. These bitwise checks also pass with fused multiply-adds
+(\code{-march=native}), since all versions use the same expressions.
 
 \paragraph{Precision.}
 The values, derivatives and norms in \code{float} and \code{double} are
@@ -666,7 +780,7 @@ fails, including through overflow in single precision, the routine raises an
 exception instead of returning wrong zeros. The cost is $m+1$ evaluations of
 $\Pab{m}$, negligible next to the Newton iterations.
 
-\subsection{Accuracy and range}
+\subsection{Accuracy, range and cost}
 
 \begin{table}[h]
 \centering
@@ -692,6 +806,19 @@ the DG parameters. For large parameters, such as $\alpha=\beta\ge5$ with
 $m>40$ or $\beta=100$, the values of $\Pab{m}$ approach the range of single
 precision; the routine then raises \code{std::runtime\_error}, and the
 zeros should be computed in \code{double} and rounded.
+
+\paragraph{Cost.}
+Each Newton step evaluates $\Pab{m}$ and its derivative at one point, a
+single dependency chain of $m$ steps, so a call costs about
+$m^2\times$(iterations per zero) chain steps. Three measures reduce it. The
+coefficients of~(A.1.3$'$) are tabulated once per call instead of being
+recomputed at every Newton step. The deflation sum
+$\sum_{j<k}1/(r-\xi_j)$ uses eight partial sums, so that its independent
+divisions run as SIMD operations. The $m+1$ evaluations of the certification
+are done in one call of the register-blocked array routine. With fused
+multiply-adds, a call takes 4.5\,$\mu$s for $m=16$, 22\,$\mu$s for $m=32$ and
+80\,$\mu$s for $m=64$ (GLL, \code{double}), about three times less than
+before (Table~\ref{tab:perf}).
 
 \begin{center}
 \begin{tabular}{@{}l>{\raggedright\arraybackslash}p{0.36\textwidth}@{}}

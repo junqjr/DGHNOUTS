@@ -55,6 +55,8 @@ AMD GPUs (Jean-Zay, Adastra, Alice Recoque) and on CPUs.
 dghnouts/
 ├── CMakeLists.txt        build definition, compiler-specific flags
 ├── CMakePresets.json     one preset per compiler (gcc, nvhpc, intel, clang, gcc-debug)
+├── bench/
+│   └── bench_jacobi.cpp  timing of every routine (target bench_jacobi)
 ├── docs/
 │   ├── Doxyfile          Doxygen configuration (API reference)
 │   ├── mainpage.md       front page of the API reference
@@ -115,6 +117,22 @@ cmake --preset gcc -DPOLYLIB_DIR=/path/to/polylib
 
 Polylib is used only as a reference in the tests; it is never part of the library.
 
+### Benchmark
+
+`bench/bench_jacobi.cpp` times every routine (it is not a test and is not built
+by default):
+
+```bash
+cmake --preset gcc -DDGPOLY_NATIVE=ON
+cmake --build --preset gcc --target bench_jacobi
+./build/gcc/bench_jacobi
+```
+
+On a cluster, build and run it on a compute node: `-march=native` targets the
+processor of the machine that compiles, and a login node may have a different
+one. Results and the optimisations behind them (normalised recurrence, register
+blocking, fused multiply-add) are in Section 2.6 of the theory document.
+
 ## Documentation
 
 Two complementary documents:
@@ -162,7 +180,7 @@ standard-element coordinate is ξ (`xi`), as in Karniadakis & Sherwin, Chapter 2
 | `jacobi(n, a, b, xi)` | P<sub>n</sub><sup>(α,β)</sup>(ξ) | recurrence (A.1.3) |
 | `jacobi_deriv(n, a, b, xi)` | dP<sub>n</sub><sup>(α,β)</sup>/dξ | (A.1.8), valid at ξ = ±1 |
 | `jacobi_and_deriv(n, a, b, xi, p, dp)` | P<sub>n</sub> and P′<sub>n</sub> at one point, one pass | (A.1.3), (D.2) |
-| `jacobi(n, a, b, xi, np, p)` | P<sub>n</sub> at np points | (A.1.3), vectorised over points |
+| `jacobi(n, a, b, xi, np, p)` | P<sub>n</sub> at np points | (A.1.3′), register-blocked |
 | `jacobi_deriv(n, a, b, xi, np, dp)` | P′<sub>n</sub> at np points | (A.1.8) |
 | `jacobi_and_deriv(n, a, b, xi, np, p, dp)` | P<sub>n</sub> and P′<sub>n</sub> at np points, one pass | (A.1.3), (D.2) |
 | `jacobi_all(nmax, a, b, xi, np, V)` | P<sub>0</sub> … P<sub>nmax</sub> (Vandermonde matrix) | (D.4) |

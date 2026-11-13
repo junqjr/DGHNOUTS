@@ -76,6 +76,11 @@ foreach(t IN LISTS DGPOLY_TESTS)
   add_test(NAME ${t} COMMAND ${t})
 endforeach()
 
+# --- benchmark (not a test): cmake --build --preset <p> --target bench_jacobi
+add_executable(bench_jacobi EXCLUDE_FROM_ALL bench/bench_jacobi.cpp)
+target_link_libraries(bench_jacobi PRIVATE dgpoly)
+target_compile_options(bench_jacobi PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH})
+
 # ---------------------------------------------------------------------------
 # Documentation:  cmake --build --preset gcc --target doc
 #   HTML API documentation (Doxygen) in <build>/doc/html, with the theory PDF

@@ -33,6 +33,9 @@ Tests
 test_jacobi.cpp lists every identity checked and its tolerance
 (\theorypdf, Section 3).
 
+Performance: bench_jacobi.cpp times every routine; the optimisations and the
+measurements are in \theorypdf, Section 2.6.
+
 Building, testing and choosing the compiler are described in the
 `README.md` at the root of the repository.
 

@@ -16,7 +16,7 @@ FULL_PATH_NAMES        = YES
 #---------------------------------------------------------------------------
 # Input
 #---------------------------------------------------------------------------
-INPUT                  = docs/mainpage.md include src tests
+INPUT                  = docs/mainpage.md include src tests bench
 FILE_PATTERNS          = *.hpp *.cpp *.h *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
