@@ -28,8 +28,9 @@
  *            `std::invalid_argument` is thrown;
  *          - array routines take a raw pointer and a size `(xi, np)`, so they work
  *            on any contiguous storage (`std::vector::data()`, C arrays, Kokkos
- *            host views). Their loops run over the degree outside and over the
- *            points inside, so the inner loop is vectorised by the compiler.
+ *            host views). They are register-blocked: the recurrence runs on
+ *            blocks of 32 points held in SIMD registers (see \ref performance
+ *            "Performance").
  *
  * \author  Carlos Junqueira Junior (DynFluid, Arts et Métiers – ENSAM)
  */
@@ -82,7 +83,7 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  * the recurrence coefficients are computed in `T`.
  * - `double` is the default and the reference precision.
  * - `float` keeps only 4 to 5 correct digits for \f$n\le20\f$: relative
- *   errors measured against `long double` reach \f$5\times10^{-6}\f$ for the
+ *   errors measured against `long double` reach \f$10^{-5}\f$ for the
  *   values, \f$7\times10^{-5}\f$ for the derivatives and \f$10^{-5}\f$ for
  *   the norms, since the recurrence and the `lgamma` cancellation amplify the
  *   \f$6\times10^{-8}\f$ rounding of each operation. Use it only to study the
@@ -92,6 +93,32 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  * - `long double` is 80-bit extended on x86 (about 3 extra digits) and IEEE
  *   quad on Arm (e.g. Rhea, Grace; slow, software-emulated). It is useful to
  *   compute high-order nodes and weights to full `double` accuracy.
+ *
+ * \anchor performance
+ * \par Performance
+ * - **Normalised recurrence (A.1.3').** The coefficients are divided by
+ *   \f$a_n^1\f$ once, \f$P_{n+1} = (A_n + B_n\xi)P_n - C_nP_{n-1}\f$, so a step
+ *   costs two multiply-adds and a multiplication, without division. The array
+ *   routines and jacobi_zeros() compute the table \f$A_k,B_k,C_k\f$ once per call.
+ * - **Register blocking.** The array routines run the whole recurrence on
+ *   blocks of 32 points kept in SIMD registers, instead of sweeping the arrays
+ *   in memory once per degree. Each point's recurrence is a dependency chain;
+ *   32 doubles give 8 independent AVX2 registers, enough to hide its latency.
+ * - **Fused multiply-add** is used when the hardware has it (`-march=native`,
+ *   CMake option `DGPOLY_NATIVE=ON`); it halves the latency of a step.
+ * - Measured with `bench_jacobi` (AVX-512 Xeon, `-march=native`, double,
+ *   \f$n=16\f$): \f$\times15\f$ to \f$\times40\f$ for the array routines and
+ *   \f$\times3\f$ for jacobi_zeros(), compared with the reference
+ *   implementation. The single-point routines are latency-bound by nature:
+ *   for many points, use the array versions.
+ *
+ * \par Two implementations
+ * These techniques live in the optimised implementation (jacobi_optimized.cpp,
+ * namespace `dg::optimized`), which the public functions use by default. The
+ * reference implementation (jacobi_reference.cpp, `dg::reference`) evaluates
+ * the book's equations as written, one point at a time, and is the one to read
+ * first. Build option `DGHNOUTS_KERNELS=reference|optimized`; see
+ * jacobi_kernels().
  *
  * See \theorypdf, Sections 1 and 2.
  * @{
@@ -215,18 +242,24 @@ void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp);
 /**
  * \brief Values \f$p_i = P_n^{\alpha,\beta}(\xi_i)\f$ at \f$n_p\f$ points.
  *
- * Same recurrence (A.1.3) as the single-point jacobi(), with the loops
- * ordered for vectorisation:
+ * Same recurrence as the single-point jacobi(), in its normalised form
+ * (A.1.3'), register-blocked:
  * \code
- * for k = 1 .. n-1                      // degree: sequential
- *     compute a1..a4 once
- *     for i = 0 .. np-1                 // points: independent -> SIMD
- *         p_{k+1}[i] = ((a2 + a3 xi[i]) p_k[i] - a4 p_{k-1}[i]) / a1
+ * compute A_k, B_k, C_k once                  // k = 1 .. n-1
+ * for each block of 32 points                 // xi, P_k, P_{k-1} in registers
+ *     for k = 1 .. n-1                         // degree: sequential
+ *         for i in block                       // points: independent -> SIMD
+ *             q = (A_k + B_k xi[i]) P_k[i] - C_k P_{k-1}[i]
+ *             P_{k-1}[i] = P_k[i];  P_k[i] = q
+ *     write P_n for the block
  * \endcode
- * The operation count is \f$O(n\,n_p)\f$, as for \f$n_p\f$ scalar calls; the
- * speed-up (about \f$\times5\f$ on \f$10^6\f$ points) comes from SIMD and from
- * computing the coefficients once per degree. The results are bitwise
- * identical to the single-point version.
+ * The operation count is \f$O(n\,n_p)\f$, as for \f$n_p\f$ scalar calls. The
+ * speed-up comes from SIMD, from the 8 independent register chains per block
+ * that hide the latency of each step, and from touching memory only once per
+ * point: \f$\times3.4\f$ on 4096 points and \f$\times5.8\f$ on \f$10^6\f$ points
+ * against the earlier loop over degrees outside and points inside (double,
+ * \f$n=16\f$, AVX-512). The results are bitwise identical to the single-point
+ * version.
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
  * \param[in]  n      degree, \f$n \ge 0\f$
@@ -284,10 +317,11 @@ void jacobi_deriv(int n, double alpha, double beta,
  * Like (A.1.8) it has no division by \f$1-\xi^2\f$ and holds at \f$\xi=\pm1\f$.
  *
  * \par Implementation
- * The four recurrence arrays (\f$P_k\f$, \f$P_{k-1}\f$ and their derivatives)
- * are processed in blocks of 256 points, so that they stay in the L1 cache
- * for all \f$n\f$ steps. Without blocking, the routine is memory-bound for
- * large \f$n_p\f$ and slower than two separate calls.
+ * Register-blocked like jacobi(): for each block of 32 points, the four
+ * recurrence variables (\f$P_k\f$, \f$P_{k-1}\f$ and their derivatives) stay
+ * in registers for all \f$n\f$ steps, using the normalised forms (A.1.3') and
+ * (D.2'). This replaces an earlier L1-cache blocking of 256 points:
+ * \f$\times3.2\f$ to \f$\times3.9\f$ faster (double, \f$n=16\f$, AVX-512).
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
  * \param[in]  n      degree, \f$n \ge 0\f$
@@ -327,6 +361,13 @@ void jacobi_and_deriv(int n, double alpha, double beta,
  * \f$\mathbf{V}\f$ maps modal (Legendre) coefficients to nodal values,
  * \f$u(\xi_i) = \sum_k \mathbf{V}_{ik}\,\hat u_k\f$: the transform used by
  * modal filters and shock sensors.
+ *
+ * \par Implementation
+ * Register-blocked like jacobi(): each block of 32 points fills its own rows
+ * of \f$\mathbf{V}\f$ while they are in the L1 cache (the earlier version wrote
+ * \f$\mathbf{V}\f$ column by column, touching every row at every degree).
+ * For large \f$n_p\f$ the routine is limited by writing its own output,
+ * \f$N+1\f$ values per point.
  *
  * \par Storage
  * Row-major, one row per point and one column per degree:
@@ -487,6 +528,16 @@ T jacobi_norm2(int n, double alpha, double beta);
  *   far from the Chebyshev guess (e.g. \f$\alpha=\beta=20\f$) Newton first
  *   creeps towards the root and needs up to about 170.
  *
+ * \par Cost
+ * Each Newton step evaluates \f$P_m\f$ and \f$P_m'\f$ at one point: a single
+ * dependency chain of \f$m\f$ steps, so the cost is about
+ * \f$m^2\times\f$(iterations) chain steps. The coefficient table is built
+ * once per call, the deflation sum uses eight partial sums (SIMD divisions),
+ * and the certification evaluates its \f$m+1\f$ points in one array call.
+ * Measured (GLL, double, AVX-512): 4.5 µs for \f$m=16\f$, 22 µs for
+ * \f$m=32\f$, 80 µs for \f$m=64\f$, about 3 times faster than without these
+ * optimisations; negligible in a solver, where it runs once.
+ *
  * \par Accuracy and range (measured, \f$m \le 60\f$)
  * - `double`: within \f$2\times10^{-16}\f$ of the `long double` zeros (1–2 ulp)
  *   for \f$\alpha,\beta\f$ up to 100; Polylib's eigenvalue method agrees only
@@ -529,6 +580,27 @@ void jacobi_zeros(int m, double alpha, double beta, T* z);
  */
 template <typename T = double>
 std::vector<T> jacobi_zeros(int m, double alpha, double beta);
+
+/// @}
+
+// ===========================================================================
+/// \name Implementation in use
+/// @{
+// ===========================================================================
+
+/**
+ * \brief Name of the implementation behind the public functions:
+ *        `"optimized"` (default) or `"reference"`.
+ *
+ * The module has two implementations with the same results up to round-off:
+ * a reference one that follows the book line by line (jacobi_reference.cpp,
+ * written to be read) and an optimised one (jacobi_optimized.cpp). The choice
+ * is made when building, with the CMake option
+ * `DGHNOUTS_KERNELS=reference|optimized`.
+ *
+ * \return `"optimized"` or `"reference"`
+ */
+const char* jacobi_kernels();
 
 /// @}
 

@@ -317,10 +317,11 @@ int main()
             }
         }
         // float: 2^-24 = 6e-8 per operation, amplified by the recurrence (values
-        // ~5e-6, derivatives ~7e-5 at n = 20) and by the cancellation between the
-        // large lgamma terms of the norm (~1e-5). Measured, not theoretical.
-        report("float  vs long double: values,      all (a,b)", ef_val, 1e-5);
-        report("float  vs long double: derivatives, all (a,b)", ef_der, 1e-4);
+        // up to 1e-5, derivatives up to 7e-5 at n = 20) and by the cancellation
+        // between the large lgamma terms of the norm (~1e-5). Measured, largest
+        // over both implementations with and without FMA; tolerances 2x that.
+        report("float  vs long double: values,      all (a,b)", ef_val, 2e-5);
+        report("float  vs long double: derivatives, all (a,b)", ef_der, 2e-4);
         report("float  vs long double: norms,       all (a,b)", ef_nrm, 1e-4);
         report("double vs long double: values,      all (a,b)", ed_val, 1e-13);
         report("double vs long double: derivatives, all (a,b)", ed_der, 1e-12);
