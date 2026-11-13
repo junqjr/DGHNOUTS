@@ -128,8 +128,8 @@ largest relative errors measured against \code{long double} by test~9
 \toprule
 & \code{float} & \code{double} \\
 \midrule
-values $\Pab{n}(\xi_i)$                    & $5\times10^{-6}$ & $2\times10^{-14}$ \\
-derivatives $\bigl[\Pab{n}\bigr]'(\xi_i)$  & $7\times10^{-5}$ & $8\times10^{-14}$ \\
+values $\Pab{n}(\xi_i)$                    & $1\times10^{-5}$ & $2\times10^{-14}$ \\
+derivatives $\bigl[\Pab{n}\bigr]'(\xi_i)$  & $7\times10^{-5}$ & $2\times10^{-13}$ \\
 norms $h_n^{\alpha,\beta}$                 & $1\times10^{-5}$ & $2\times10^{-14}$ \\
 \midrule
 unit round-off                              & $6\times10^{-8}$ & $1.1\times10^{-16}$ \\
@@ -137,7 +137,9 @@ unit round-off                              & $6\times10^{-8}$ & $1.1\times10^{-
 \end{tabular}
 \caption{Largest relative errors against \code{long double}, for
 $n=0,\dots,20$, all parameter pairs of Section~\ref{sec:tests} and 43 points
-including $\xi=\pm1$ (x86, 80-bit \code{long double}).}
+including $\xi=\pm1$ (x86, 80-bit \code{long double}); largest over the
+reference and optimised implementations (Section~\ref{sec:performance}), with
+and without fused multiply-add.}
 \label{tab:precision}
 \end{table}
 
@@ -220,14 +222,22 @@ For $n\ge1$ and $\alpha,\beta>-1$ we have $2n+\alpha+\beta>0$ and
 $n+\alpha+\beta+1>0$, so $a_n^1\neq0$ and the recursion never divides by zero.
 
 \paragraph{Implementation.}
-The internal helper \code{rec\_coef(n, alpha, beta)} returns
-$a_n^1,\dots,a_n^4$ exactly as in~(A.1.3). Inside a routine, however,
+The module has two implementations with the same results up to round-off
+(Section~\ref{sec:performance}). The \emph{reference} implementation,
+\code{src/jacobi\_reference.cpp}, evaluates~(A.1.3) exactly as written, one
+point at a time; it is the one to read first. The \emph{optimised}
+implementation, \code{src/jacobi\_optimized.cpp}, is described in the rest of
+this section and in Sections~\ref{sec:deriv} and~\ref{sec:vandermonde}.
+
+In both, the book's coefficients $a_n^1,\dots,a_n^4$ of~(A.1.3) are
+returned by the internal helper \code{rec\_coef(n, alpha, beta)}. Inside a
+routine, however,
 \code{n} is the target degree, so the recurrence step is indexed by
 \code{k}: step $k$ is (A.1.3) with the book's $n$ replaced by $k$. It calls
 \code{rec\_coef(k, alpha, beta)} and produces $\Pab{k+1}$ from $\Pab{k}$ and
 $\Pab{k-1}$, for $k=1,\dots,n-1$.
 
-\paragraph{Normalised form.}
+\paragraph{Normalised form (optimised implementation).}
 Dividing~(A.1.3) by $a_n^1$ once and for all gives
 \begin{equation}
   \Pab{n+1}(\xi) = \bigl(A_n + B_n\xi\bigr)\Pab{n}(\xi) - C_n\,\Pab{n-1}(\xi),
@@ -235,16 +245,22 @@ Dividing~(A.1.3) by $a_n^1$ once and for all gives
   A_n = \frac{a_n^2}{a_n^1},\quad B_n = \frac{a_n^3}{a_n^1},\quad C_n = \frac{a_n^4}{a_n^1},
   \tag{A.1.3$'$}
 \end{equation}
-which the code uses everywhere. A step then costs two multiply-adds and a
-multiplication, without division. The coefficients are computed by
-\code{rec\_abc(k, alpha, beta)} as $r=1/a_k^1$ followed by three
-multiplications. The array routines and \code{jacobi\_zeros} store them in a
-table $A_k,B_k,C_k$, $k=1,\dots,n-1$, built once per call (on the stack for
-$n\le128$). The single-point routines compute them on the fly: one division per
-step, off the dependency chain of the recurrence. In the original form the
-new value itself was divided by $a_n^1$, which put the long latency of a
-division on that chain. Accuracy is unchanged
-(Table~\ref{tab:precision} was measured with~(A.1.3$'$)).
+which the optimised implementation uses everywhere. A step then costs two
+multiply-adds and a multiplication, without division. The coefficients are
+computed by \code{rec\_abc(k, alpha, beta)} with three true divisions, so that
+each is rounded once. Multiplying by a rounded $1/a_k^1$ instead rounds twice.
+For integer $\alpha,\beta$, where the $a_n^j$ are exact integers and the
+reference implementation has no coefficient rounding at all, that made the
+worst case about twice less accurate wherever the recurrence cancels (e.g.\
+$\alpha=2$, $n=24$, $\xi\to1$); the comparison test of
+Section~\ref{sec:performance} caught it. The array routines and
+\code{jacobi\_zeros} store the coefficients in a table $A_k,B_k,C_k$,
+$k=1,\dots,n-1$, built once per call (on the stack for $n\le128$), so the
+divisions cost nothing there. The single-point routines compute them on the
+fly, off the dependency chain of the recurrence; in~(A.1.3) the new value
+itself is divided by $a_n^1$, which puts the long latency of a division on
+that chain. Accuracy is the same as with~(A.1.3)
+(Table~\ref{tab:precision}).
 
 \paragraph{Register blocking.}
 Each point needs its own recurrence, so the operation count is $O(n\,n_p)$
@@ -490,15 +506,48 @@ For Legendre, (A.1.7) reduces to $h_n^{0,0}=2/(2n+1)$. For Chebyshev,
 classical value of $\int_{-1}^{1}(1-\xi^2)^{-1/2}\,\dd\xi$.
 
 % ===========================================================================
-\subsection{Performance}
+\subsection{Reference and optimised implementations; performance}
 \label{sec:performance}
 % ===========================================================================
 
-The program \code{bench/bench\_jacobi.cpp} times every routine through the
-public interface (target \code{bench\_jacobi}; it is not a test).
-Table~\ref{tab:perf} compares the implementation described above with the
-earlier one (division in the recurrence, degree loop outside, L1 blocking of
-256 points in \code{jacobi\_and\_deriv}).
+Every routine of the module exists twice, with the same signature and the
+same results up to round-off:
+\begin{center}
+\small
+\begin{tabular}{@{}ll>{\raggedright\arraybackslash}p{0.38\textwidth}@{}}
+\toprule
+Namespace & File & Written for \\
+\midrule
+\code{dg::reference} & \code{src/jacobi\_reference.cpp} & reading: (A.1.3), (A.1.8), B.2 as in the book, one point at a time \\
+\code{dg::optimized} & \code{src/jacobi\_optimized.cpp} & speed: (A.1.3$'$), register blocking, fused multiply-add \\
+\bottomrule
+\end{tabular}
+\end{center}
+Both are always compiled. The public functions (\code{dg::jacobi}, \dots,
+in \code{src/jacobi.cpp}) forward to one of them, chosen when building:
+\begin{lstlisting}[language=bash]
+cmake --preset gcc                                 # optimized (default)
+cmake --preset gcc -DDGHNOUTS_KERNELS=reference    # or: cmake --preset gcc-reference
+\end{lstlisting}
+The option defines the macro \code{DGHNOUTS\_REFERENCE\_KERNELS}, which is
+tested in a single place, \code{src/jacobi.cpp}; there is no \code{\#ifdef}
+inside the routines. \code{dg::jacobi\_kernels()} returns the name of the
+implementation in use.
+
+The reference implementation is meant to be read next to this document by
+someone new to the code; the optimised one is what a production run uses.
+Keeping both has a second benefit: the reference serves as the oracle for the
+optimised one. The test \code{tests/test\_impl.cpp} measures both against
+\code{long double} for every routine and precision. It fails if the optimised
+implementation is more than three times less accurate than the reference,
+and it checks that the public functions match the chosen implementation
+bitwise. The other tests run on whichever implementation is selected, and pass
+with both.
+
+\paragraph{Measurements.}
+The program \code{bench/bench\_jacobi.cpp} (target \code{bench\_jacobi}; it is
+not a test) times both implementations side by side
+(Table~\ref{tab:perf}).
 
 \begin{table}[h]
 \centering
@@ -507,16 +556,16 @@ earlier one (division in the recurrence, degree loop outside, L1 blocking of
 \toprule
 & \multicolumn{2}{c}{$n_p=4096$} & \multicolumn{2}{c}{$n_p=10^6$} \\
 \cmidrule(lr){2-3}\cmidrule(l){4-5}
-Routine & before & after & before & after \\
+Routine & reference & optimised & reference & optimised \\
 \midrule
-\code{jacobi} (array)           & 0.65 & 0.19 & 0.93 & 0.16 \\
-\code{jacobi\_deriv} (array)    & 0.50 & 0.11 & 0.87 & 0.10 \\
-\code{jacobi\_and\_deriv} (array) & 1.29 & 0.33 & 1.17 & 0.37 \\
-\code{jacobi\_all}              & 1.18 & 0.55 & 6.07 & 2.31 \\
+\code{jacobi} (array)           & 3.28 & 0.16 & 3.34 & 0.15 \\
+\code{jacobi\_deriv} (array)    & 3.18 & 0.12 & 4.11 & 0.11 \\
+\code{jacobi\_and\_deriv} (array) & 6.01 & 0.36 & 5.86 & 0.38 \\
+\code{jacobi\_all}              & 3.79 & 0.53 & 3.93 & 2.09 \\
 \midrule
 & \multicolumn{2}{c}{$m=32$} & \multicolumn{2}{c}{$m=64$} \\
 \cmidrule(lr){2-3}\cmidrule(l){4-5}
-\code{jacobi\_zeros}, GLL ($\mu$s per call) & 61 & 22 & 257 & 80 \\
+\code{jacobi\_zeros}, GLL ($\mu$s per call) & 65 & 21 & 255 & 83 \\
 \bottomrule
 \end{tabular}
 \caption{Nanoseconds per point and per degree, \code{double}, $n=16$; for
@@ -526,11 +575,16 @@ repetitions. On this shared machine, differences below about 30\,\% are noise.}
 \label{tab:perf}
 \end{table}
 
-Without \code{-march=native} (SSE2 only, no FMA) the gains are smaller but
-still a factor 1.6 to 3.3 for the array routines and 3 for the zeros. The
-single-point routines and \code{jacobi\_norm2} did not change measurably: a
-single evaluation is one dependency chain, and the norm is six
-\code{lgamma} calls. To evaluate many points, use the array versions.
+For many points the optimised array routines are 15 to 40 times faster than
+the reference, which evaluates one point at a time; the zeros are 3 times
+faster. An intermediate version, with~(A.1.3) evaluated for all points
+degree by degree (vectorised, but memory-bound and with the division on the
+chain), was 3 to 9 times slower than the optimised one. Without
+\code{-march=native} (SSE2 only, no FMA) the gains are smaller. The
+single-point routines are the same in both implementations to within noise: a
+single evaluation is one dependency chain. \code{jacobi\_norm2} (six
+\code{lgamma} calls) has a single implementation. To evaluate many points,
+use the array versions.
 
 \paragraph{\code{-march=native} on a cluster.}
 This flag optimises for the processor of the machine that compiles. If a
@@ -541,7 +595,7 @@ compute node, or name the target explicitly (e.g.\
 
 \paragraph{Relevance.}
 In a DG solver these routines run once, at start-up, on 5 to 30 points: a few
-microseconds, before or after. The gains matter when evaluating at many
+microseconds with either implementation. The gains matter when evaluating at many
 points (interpolation onto fine output grids, plotting, error norms). The
 techniques (loop order, registers before cache, enough independent work to
 hide latency) are the ones the solver kernels will need.
@@ -602,9 +656,9 @@ array version. These bitwise checks also pass with fused multiply-adds
 \paragraph{Precision.}
 The values, derivatives and norms in \code{float} and \code{double} are
 compared with \code{long double} (Table~\ref{tab:precision}). The tolerances
-are set from the measured errors: $10^{-5}$ (values) and $10^{-4}$
-(derivatives, norms) in \code{float}, $10^{-13}$ to $10^{-12}$ in
-\code{double}. The \code{long double} instantiation is checked against the
+are set from the measured errors, with a margin: $2\times10^{-5}$ (values),
+$2\times10^{-4}$ (derivatives) and $10^{-4}$ (norms) in \code{float},
+$10^{-13}$ to $10^{-12}$ in \code{double}. The \code{long double} instantiation is checked against the
 end-point value~(A.1.5) to $10^{-16}$, below what \code{double} can reach,
 which confirms that it really computes in extended precision.
 

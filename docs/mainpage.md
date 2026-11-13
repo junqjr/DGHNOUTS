@@ -14,6 +14,12 @@ Sherwin, *Spectral/hp Element Methods for Computational Fluid Dynamics*, 2nd ed.
 How to read the two together
 ----------------------------
 
+- **Start with jacobi_reference.cpp.** Every routine exists twice: a
+  reference implementation that follows the book line by line
+  (namespace `dg::reference`) and an optimised one (`dg::optimized`,
+  jacobi_optimized.cpp). The public functions use the optimised one unless the
+  library is built with `-DDGHNOUTS_KERNELS=reference`; see jacobi_impl.hpp.
+
 - Every routine's documentation states the equation it implements, with the
   book's number, e.g. (A.1.3), or (D.n) for an equation derived in the theory
   document, and the section of \theorypdf where it is discussed.

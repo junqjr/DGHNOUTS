@@ -36,10 +36,30 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
   endif()
 endif()
 
-# --- the library: Jacobi polynomials (later: zeros, quadrature, D, Vandermonde)
-add_library(dgpoly src/jacobi.cpp)
-target_include_directories(dgpoly PUBLIC include)
+# ---------------------------------------------------------------------------
+# Implementation of the kernels. Each module exists in two versions with the
+# same results up to round-off: "reference" follows the book line by line
+# (written to be read), "optimized" is the fast one. Both are always compiled
+# (the tests compare them); this option chooses which one the public
+# functions use. See src/jacobi_impl.hpp.
+# ---------------------------------------------------------------------------
+set(DGHNOUTS_KERNELS "optimized" CACHE STRING "Kernels used by the public functions: optimized or reference")
+set_property(CACHE DGHNOUTS_KERNELS PROPERTY STRINGS optimized reference)
+if(NOT DGHNOUTS_KERNELS MATCHES "^(optimized|reference)$")
+  message(FATAL_ERROR "DGHNOUTS_KERNELS must be 'optimized' or 'reference', got '${DGHNOUTS_KERNELS}'")
+endif()
+message(STATUS "Kernels: ${DGHNOUTS_KERNELS}")
+
+# --- the library: Jacobi polynomials (later: quadrature, D, Vandermonde)
+add_library(dgpoly
+  src/jacobi.cpp              # public functions; chooses the implementation
+  src/jacobi_reference.cpp    # dg::reference: the book's equations, to be read
+  src/jacobi_optimized.cpp)   # dg::optimized: register blocking, FMA
+target_include_directories(dgpoly PUBLIC include PRIVATE src)
 target_compile_options(dgpoly PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH})
+if(DGHNOUTS_KERNELS STREQUAL "reference")
+  target_compile_definitions(dgpoly PRIVATE DGHNOUTS_REFERENCE_KERNELS)
+endif()
 
 # --- Optional: Polylib as an external reference for the tests
 #     cmake --preset gcc -DPOLYLIB_DIR=/path/to/folder/with/polylib.cpp
@@ -48,10 +68,11 @@ set(POLYLIB_DIR "" CACHE PATH "Folder containing polylib.cpp and polylib.h (opti
 
 # --- tests: one executable per module, Polylib linked when available
 enable_testing()
-set(DGPOLY_TESTS test_jacobi test_zeros)
+set(DGPOLY_TESTS test_jacobi test_zeros test_impl)
 foreach(t IN LISTS DGPOLY_TESTS)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE dgpoly)
+  target_include_directories(${t} PRIVATE src)      # test_impl uses the internal header
   target_compile_options(${t} PRIVATE ${DGPOLY_WARNINGS})
 endforeach()
 
@@ -79,6 +100,7 @@ endforeach()
 # --- benchmark (not a test): cmake --build --preset <p> --target bench_jacobi
 add_executable(bench_jacobi EXCLUDE_FROM_ALL bench/bench_jacobi.cpp)
 target_link_libraries(bench_jacobi PRIVATE dgpoly)
+target_include_directories(bench_jacobi PRIVATE src)  # times dg::reference and dg::optimized
 target_compile_options(bench_jacobi PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH})
 
 # ---------------------------------------------------------------------------

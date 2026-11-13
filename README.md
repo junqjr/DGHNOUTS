@@ -65,11 +65,15 @@ dghnouts/
 ├── include/
 │   └── jacobi.hpp        public interface of the Jacobi module
 ├── src/
-│   └── jacobi.cpp        implementation
+│   ├── jacobi.cpp            public functions; chooses the implementation (one #ifdef)
+│   ├── jacobi_impl.hpp       internal: the two implementations and shared helpers
+│   ├── jacobi_reference.cpp  reference implementation: the book's equations, START HERE
+│   └── jacobi_optimized.cpp  optimised implementation: register blocking, FMA
 └── tests/
     ├── test_utils.hpp    PASS/FAIL helpers shared by the tests
     ├── test_jacobi.cpp   Jacobi polynomials against the identities of Appendix A
-    └── test_zeros.cpp    zeros: closed forms, symmetry, interlacing, precision
+    ├── test_zeros.cpp    zeros: closed forms, symmetry, interlacing, precision
+    └── test_impl.cpp     reference vs optimised implementation
 ```
 
 ## Requirements
@@ -119,8 +123,8 @@ Polylib is used only as a reference in the tests; it is never part of the librar
 
 ### Benchmark
 
-`bench/bench_jacobi.cpp` times every routine (it is not a test and is not built
-by default):
+`bench/bench_jacobi.cpp` times every routine, reference and optimised
+implementations side by side (it is not a test and is not built by default):
 
 ```bash
 cmake --preset gcc -DDGPOLY_NATIVE=ON
@@ -132,6 +136,34 @@ On a cluster, build and run it on a compute node: `-march=native` targets the
 processor of the machine that compiles, and a login node may have a different
 one. Results and the optimisations behind them (normalised recurrence, register
 blocking, fused multiply-add) are in Section 2.6 of the theory document.
+
+## Reference and optimised implementations
+
+Every numerical routine exists twice, with the same interface and the same
+results up to round-off:
+
+| Implementation | File | Written for |
+|---|---|---|
+| `dg::reference` | `src/jacobi_reference.cpp` | **reading**: the book's equations, one point at a time |
+| `dg::optimized` | `src/jacobi_optimized.cpp` | **speed**: register blocking, fused multiply-add (15–40× faster on many points) |
+
+**New to the code? Read `src/jacobi_reference.cpp` first**, next to the theory
+document: every line is commented with its equation number. The optimised file
+computes the same quantities in a less obvious way.
+
+The public functions (`dg::jacobi`, …) use the optimised implementation by
+default. To build with the reference one:
+
+```bash
+cmake --preset gcc-reference                       # or: cmake --preset gcc -DDGHNOUTS_KERNELS=reference
+cmake --build --preset gcc-reference
+```
+
+The choice is made by a single `#ifdef` in `src/jacobi.cpp`; there is none
+inside the routines. Both implementations are always compiled:
+`test_impl` checks that the optimised one is as accurate as the reference, and
+`bench_jacobi` times them side by side. `dg::jacobi_kernels()` returns
+`"optimized"` or `"reference"`.
 
 ## Documentation
 
@@ -163,6 +195,7 @@ without an internet connection. Graphviz (`dot`) is optional and adds call graph
 | `nvhpc` | NVIDIA HPC SDK `nvc++` | load the `nvidia-compilers` module on Jean-Zay first |
 | `intel` | Intel oneAPI `icpx` | |
 | `gcc-debug` | GNU `g++` | `-g` with AddressSanitizer and UBSan |
+| `gcc-reference` | GNU `g++` | reference (readable) kernels instead of the optimised ones |
 
 Add `-DDGPOLY_NATIVE=ON` to optimise for the CPU of the build machine
 (`-march=native`, `-xHost` or `-tp=native` depending on the compiler).

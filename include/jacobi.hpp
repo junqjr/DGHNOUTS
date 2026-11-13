@@ -83,7 +83,7 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  * the recurrence coefficients are computed in `T`.
  * - `double` is the default and the reference precision.
  * - `float` keeps only 4 to 5 correct digits for \f$n\le20\f$: relative
- *   errors measured against `long double` reach \f$5\times10^{-6}\f$ for the
+ *   errors measured against `long double` reach \f$10^{-5}\f$ for the
  *   values, \f$7\times10^{-5}\f$ for the derivatives and \f$10^{-5}\f$ for
  *   the norms, since the recurrence and the `lgamma` cancellation amplify the
  *   \f$6\times10^{-8}\f$ rounding of each operation. Use it only to study the
@@ -107,10 +107,18 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  * - **Fused multiply-add** is used when the hardware has it (`-march=native`,
  *   CMake option `DGPOLY_NATIVE=ON`); it halves the latency of a step.
  * - Measured with `bench_jacobi` (AVX-512 Xeon, `-march=native`, double,
- *   \f$n=16\f$): \f$\times3\f$ to \f$\times9\f$ for the array routines,
- *   \f$\times3\f$ for jacobi_zeros(), compared with the earlier
- *   degree-outside/points-inside loops. The single-point routines are latency-bound
- *   by nature: for many points, use the array versions.
+ *   \f$n=16\f$): \f$\times15\f$ to \f$\times40\f$ for the array routines and
+ *   \f$\times3\f$ for jacobi_zeros(), compared with the reference
+ *   implementation. The single-point routines are latency-bound by nature:
+ *   for many points, use the array versions.
+ *
+ * \par Two implementations
+ * These techniques live in the optimised implementation (jacobi_optimized.cpp,
+ * namespace `dg::optimized`), which the public functions use by default. The
+ * reference implementation (jacobi_reference.cpp, `dg::reference`) evaluates
+ * the book's equations as written, one point at a time, and is the one to read
+ * first. Build option `DGHNOUTS_KERNELS=reference|optimized`; see
+ * jacobi_kernels().
  *
  * See \theorypdf, Sections 1 and 2.
  * @{
@@ -572,6 +580,27 @@ void jacobi_zeros(int m, double alpha, double beta, T* z);
  */
 template <typename T = double>
 std::vector<T> jacobi_zeros(int m, double alpha, double beta);
+
+/// @}
+
+// ===========================================================================
+/// \name Implementation in use
+/// @{
+// ===========================================================================
+
+/**
+ * \brief Name of the implementation behind the public functions:
+ *        `"optimized"` (default) or `"reference"`.
+ *
+ * The module has two implementations with the same results up to round-off:
+ * a reference one that follows the book line by line (jacobi_reference.cpp,
+ * written to be read) and an optimised one (jacobi_optimized.cpp). The choice
+ * is made when building, with the CMake option
+ * `DGHNOUTS_KERNELS=reference|optimized`.
+ *
+ * \return `"optimized"` or `"reference"`
+ */
+const char* jacobi_kernels();
 
 /// @}
 
