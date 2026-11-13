@@ -15,9 +15,12 @@
  */
 #include "jacobi.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 
 namespace dg {
 
@@ -144,6 +147,34 @@ T jacobi_deriv(int n, double alpha, double beta, T xi)
     // Valid at xi = +/-1, unlike (A.1.4), which divides by 1 - xi^2.
     const T s = T(0.5) * (T(n) + static_cast<T>(alpha) + static_cast<T>(beta) + T(1));
     return s * jacobi(n - 1, alpha + 1.0, beta + 1.0, xi);
+}
+
+template <typename T>
+void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp)
+{
+    check_args(n, alpha, beta);
+    const T a = static_cast<T>(alpha), b = static_cast<T>(beta);
+
+    if (n == 0) { p = T(1); dp = T(0); return; }
+
+    // Starting values: (A.1.3) for P, (D.3) for P'
+    T pkm1 = T(1), dkm1 = T(0);                          // P_0, P_0'
+    T pk = p1(a, b, xi), dk = T(0.5) * (a + b + T(2));   // P_1, P_1'
+
+    // Book's n = k, k = 1 .. n-1. Same operations, in the same order, as the
+    // array version of jacobi_and_deriv, so the results are bitwise identical.
+    for (int k = 1; k < n; ++k) {
+        const RecCoef<T> c = rec_coef(k, a, b);
+        const T axi  = c.a2 + c.a3 * xi;
+        // (A.1.3):  a1 P_{k+1}  = (a2 + a3 xi) P_k - a4 P_{k-1}
+        const T pkp1 = (axi * pk - c.a4 * pkm1) / c.a1;
+        // (D.2):    a1 P'_{k+1} = a3 P_k + (a2 + a3 xi) P'_k - a4 P'_{k-1}
+        const T dkp1 = (c.a3 * pk + axi * dk - c.a4 * dkm1) / c.a1;
+        pkm1 = pk;  pk = pkp1;
+        dkm1 = dk;  dk = dkp1;
+    }
+    p  = pk;
+    dp = dk;
 }
 
 // ===========================================================================
@@ -324,6 +355,107 @@ T jacobi_norm2(int n, double alpha, double beta)
 }
 
 // ===========================================================================
+// Zeros: Newton-Raphson with polynomial deflation (Appendix B.2)
+// ===========================================================================
+template <typename T>
+void jacobi_zeros(int m, double alpha, double beta, T* z)
+{
+    check_args(m, alpha, beta);
+    if (m == 0) return;
+
+    // alpha > beta: the zeros crowd towards xi = -1, where the search below
+    // starts, and Newton can fail for large alpha - beta. By (A.1.6),
+    // P_m^{a,b}(-xi) = (-1)^m P_m^{b,a}(xi), so the zeros of P_m^{a,b} are the
+    // negated zeros of P_m^{b,a}, which are found in the robust direction.
+    if (alpha > beta) {
+        jacobi_zeros(m, beta, alpha, z);                 // (D.10)
+        std::reverse(z, z + m);
+        for (int i = 0; i < m; ++i) z[i] = -z[i];
+        return;
+    }
+
+    const T   tol   = T(4) * std::numeric_limits<T>::epsilon();  // (D.9): |xi| < 1, so relative
+    const int maxit = 1000;   // <= 11 iterations for DG parameters; up to ~170 for alpha = beta = 20
+    const T   dth   = std::acos(T(-1)) / (T(2) * T(m));          // pi / (2m)
+
+    for (int k = 0; k < m; ++k) {
+        // (D.8): Chebyshev zero  -cos((2k+1) pi / 2m), averaged with the
+        // previous root (book, B.2: "a better approximation for the initial guess")
+        T r = -std::cos(T(2 * k + 1) * dth);
+        if (k > 0) r = T(0.5) * (r + z[k - 1]);
+
+        bool converged = false;
+        for (int it = 0; it < maxit; ++it) {
+            T p, dp;
+            jacobi_and_deriv(m, alpha, beta, r, p, dp);  // (A.1.3) + (D.2), one pass
+
+            // Deflation: s = sum_{j<k} 1/(r - xi_j) divides out the known roots
+            T s = T(0);
+            for (int j = 0; j < k; ++j) s += T(1) / (r - z[j]);
+
+            // (D.7): Newton step for f_{m-k} = P_m / prod_{j<k} (xi - xi_j)
+            const T delta = -p / (dp - p * s);
+            r += delta;
+
+            // (D.9): |delta| <= 4 eps (the book's test, with the absolute value)
+            if (std::fabs(delta) <= tol) { converged = true; break; }
+        }
+        if (!converged || !std::isfinite(r) || std::fabs(r) >= T(1))
+            throw std::runtime_error("jacobi_zeros: Newton did not converge for zero "
+                                     + std::to_string(k) + " of P_" + std::to_string(m)
+                                     + (std::is_same_v<T, float> ? " (float: compute in double"
+                                        " and round instead)" : ""));
+        z[k] = r;
+    }
+
+    // Increasing order, and the zeros must be distinct (they are simple)
+    std::sort(z, z + m);
+    for (int k = 1; k < m; ++k)
+        if (!(z[k] > z[k - 1]))
+            throw std::runtime_error("jacobi_zeros: two zeros of P_" + std::to_string(m)
+                                     + " coincide");
+
+    // alpha = beta: P_m has the parity of m (A.1.6), so make the zeros exactly
+    // symmetric. Odd functions are then integrated to exactly zero.
+    if (alpha == beta) {
+        for (int i = 0; i < m / 2; ++i) {
+            const T v = T(0.5) * (z[i] - z[m - 1 - i]);
+            z[i]         = v;
+            z[m - 1 - i] = -v;
+        }
+        if (m % 2 == 1) z[m / 2] = T(0);
+    }
+
+    // (D.11) Certification: P_m must change sign between consecutive points of
+    //   -1 < (z_0+z_1)/2 < ... < (z_{m-2}+z_{m-1})/2 < 1.
+    // These m+1 points delimit m intervals, each containing one computed zero;
+    // m sign changes prove that each interval holds exactly one true zero, so
+    // no zero was missed or found twice. Any failure (including overflow to
+    // inf/nan in float) is reported instead of returning wrong zeros.
+    T prev = jacobi(m, alpha, beta, T(-1));
+    for (int i = 0; i <= m - 1; ++i) {
+        const T xi_c = (i < m - 1) ? T(0.5) * (z[i] + z[i + 1]) : T(1);
+        const T v    = jacobi(m, alpha, beta, xi_c);
+        if (!(std::isfinite(v) && std::isfinite(prev) && v != T(0) && prev != T(0)
+              && (v > T(0)) != (prev > T(0))))
+            throw std::runtime_error("jacobi_zeros: certification failed for P_"
+                                     + std::to_string(m) + " (zeros not separated by sign"
+                                     " changes)" + (std::is_same_v<T, float> ?
+                                     "; float: compute in double and round instead" : ""));
+        prev = v;
+    }
+}
+
+template <typename T>
+std::vector<T> jacobi_zeros(int m, double alpha, double beta)
+{
+    check_args(m, alpha, beta);                          // before allocating
+    std::vector<T> z(static_cast<std::size_t>(m));
+    jacobi_zeros(m, alpha, beta, z.data());
+    return z;
+}
+
+// ===========================================================================
 // Explicit instantiations: float, double, long double
 // ===========================================================================
 /// \cond INTERNAL
@@ -340,7 +472,10 @@ T jacobi_norm2(int n, double alpha, double beta)
                             std::vector<T>&);                                          \
     template void jacobi_deriv<T>(int, double, double, const std::vector<T>&,          \
                                   std::vector<T>&);                                    \
-    template T    jacobi_norm2<T>(int, double, double);
+    template T    jacobi_norm2<T>(int, double, double);                                \
+    template void jacobi_and_deriv<T>(int, double, double, T, T&, T&);                 \
+    template void jacobi_zeros<T>(int, double, double, T*);                            \
+    template std::vector<T> jacobi_zeros<T>(int, double, double);
 
 DG_INSTANTIATE_JACOBI(float)
 DG_INSTANTIATE_JACOBI(double)

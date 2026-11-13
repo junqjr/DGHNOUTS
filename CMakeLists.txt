@@ -46,11 +46,14 @@ target_compile_options(dgpoly PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH})
 #     Without it, the tests that compare against Polylib are skipped.
 set(POLYLIB_DIR "" CACHE PATH "Folder containing polylib.cpp and polylib.h (optional)")
 
-# --- tests
+# --- tests: one executable per module, Polylib linked when available
 enable_testing()
-add_executable(test_jacobi tests/test_jacobi.cpp)
-target_link_libraries(test_jacobi PRIVATE dgpoly)
-target_compile_options(test_jacobi PRIVATE ${DGPOLY_WARNINGS})
+set(DGPOLY_TESTS test_jacobi test_zeros)
+foreach(t IN LISTS DGPOLY_TESTS)
+  add_executable(${t} tests/${t}.cpp)
+  target_link_libraries(${t} PRIVATE dgpoly)
+  target_compile_options(${t} PRIVATE ${DGPOLY_WARNINGS})
+endforeach()
 
 if(POLYLIB_DIR)
   if(NOT EXISTS "${POLYLIB_DIR}/polylib.cpp" OR NOT EXISTS "${POLYLIB_DIR}/polylib.h")
@@ -60,14 +63,18 @@ if(POLYLIB_DIR)
   target_include_directories(polylib_ref PUBLIC "${POLYLIB_DIR}")
   target_compile_options(polylib_ref PRIVATE -w)                  # legacy code: silence warnings
   set_target_properties(polylib_ref PROPERTIES CXX_STANDARD 14)   # uses 'register'
-  target_link_libraries(test_jacobi PRIVATE polylib_ref)
-  target_compile_definitions(test_jacobi PRIVATE DGPOLY_HAVE_POLYLIB)
+  foreach(t IN LISTS DGPOLY_TESTS)
+    target_link_libraries(${t} PRIVATE polylib_ref)
+    target_compile_definitions(${t} PRIVATE DGPOLY_HAVE_POLYLIB)
+  endforeach()
   message(STATUS "Polylib reference: ${POLYLIB_DIR}")
 else()
   message(STATUS "Polylib reference: not set, Polylib comparison tests skipped")
 endif()
 
-add_test(NAME jacobi COMMAND test_jacobi)
+foreach(t IN LISTS DGPOLY_TESTS)
+  add_test(NAME ${t} COMMAND ${t})
+endforeach()
 
 # ---------------------------------------------------------------------------
 # Documentation:  cmake --build --preset gcc --target doc

@@ -17,7 +17,7 @@
  *          | 5    | orthogonality and norm (A.1.7), Polylib `zwgj` quadrature | yes |
  *          | 6    | differential equation (A.1.1), \f$y''\f$ from (D.1), incl. \f$\xi=\pm1\f$ | no |
  *          | 7    | \f$L_n'(1) = n(n+1)/2\f$ (D.6)               | no  |
- *          | 8    | array routines vs single-point routines, `nullptr` outputs | no |
+ *          | 8    | array vs single-point routines, scalar one-pass routine, `nullptr` outputs | no |
  *          | 9    | `float` and `double` vs `long double`; (A.1.5) in `long double` | no |
  *
  *          Tests 1, 2 and 5 are compiled only when CMake is given `POLYLIB_DIR`
@@ -28,6 +28,7 @@
  * \theorypdf, Section 3.
  */
 #include "jacobi.hpp"
+#include "test_utils.hpp"
 #ifdef DGPOLY_HAVE_POLYLIB
 #include "polylib.h"
 #endif
@@ -40,38 +41,9 @@
 
 namespace {
 
-int n_fail = 0;   ///< number of failed checks
-int n_pass = 0;   ///< number of passed checks
-
-/**
- * \brief  Relative error with a floor of 1, so values near zero are compared absolutely.
- * \param[in] a    computed value
- * \param[in] ref  reference value
- * \return    \f$|a-\mathrm{ref}| / \max(1,|\mathrm{ref}|)\f$
- */
-long double rel_err(long double a, long double ref)
-{
-    return std::fabs(a - ref) / std::max(1.0L, std::fabs(ref));
-}
-
-/**
- * \brief  Print one PASS/FAIL line and update the counters.
- * \param[in] name     description of the check
- * \param[in] max_err  largest error found
- * \param[in] tol      tolerance; the check passes if max_err <= tol
- */
-void report(const char* name, long double max_err, double tol)
-{
-    const bool ok = max_err <= tol;
-    std::printf("  [%s] %-58s max err = %.2Le (tol %.0e)\n", ok ? "PASS" : "FAIL", name, max_err, tol);
-    ok ? ++n_pass : ++n_fail;
-}
-
-/// A pair of Jacobi weight parameters.
-struct Params {
-    double a;   ///< \f$\alpha\f$
-    double b;   ///< \f$\beta\f$
-};
+using dgtest::Params;
+using dgtest::rel_err;
+using dgtest::report;
 
 #ifdef DGPOLY_HAVE_POLYLIB
 /// Parameter pairs for the Polylib comparisons: integer or half-integer only,
@@ -285,7 +257,7 @@ int main()
         std::vector<double> V(m * (n_max + 1));
         dg::jacobi_all(n_max, a, b, xi.data(), m, V.data());
 
-        long double e_val = 0, e_der = 0, e_both = 0, e_all = 0, e_null = 0;
+        long double e_val = 0, e_der = 0, e_both = 0, e_all = 0, e_null = 0, e_one = 0;
         for (int n = 0; n <= n_max; ++n) {
             dg::jacobi(n, a, b, xi.data(), m, p.data());
             dg::jacobi_deriv(n, a, b, xi.data(), m, dp.data());
@@ -295,6 +267,9 @@ int main()
             for (std::size_t i = 0; i < m; ++i) {
                 const double ps = dg::jacobi(n, a, b, xi[i]);
                 const double ds = dg::jacobi_deriv(n, a, b, xi[i]);
+                double p1s, d1s;
+                dg::jacobi_and_deriv(n, a, b, xi[i], p1s, d1s);              // scalar one-pass
+                e_one  = std::max({e_one, rel_err(p1s, p2[i]), rel_err(d1s, dp2[i])});
                 e_val  = std::max(e_val,  rel_err(p[i], ps));
                 e_der  = std::max(e_der,  rel_err(dp[i], ds));
                 e_both = std::max({e_both, rel_err(p2[i], ps), rel_err(dp2[i], ds)});
@@ -313,6 +288,8 @@ int main()
         report(name, e_null, 0.0);
         std::snprintf(name, sizeof name, "jacobi_all (Vandermonde), a = %.1f, b = %.1f", a, b);
         report(name, e_all, 0.0);
+        std::snprintf(name, sizeof name, "jacobi_and_deriv(xi) scalar vs array, a = %.1f, b = %.1f", a, b);
+        report(name, e_one, 0.0);                      // same operations: bitwise identical
     }
 
     // ---------------------------------------------------------------------
@@ -352,6 +329,5 @@ int main()
         report("long double end-point value (A.1.5),  all (a,b)", ld_end, 1e-16);
     }
 
-    std::printf("\n%d passed, %d failed\n", n_pass, n_fail);
-    return n_fail == 0 ? 0 : 1;
+    return dgtest::summary();
 }
