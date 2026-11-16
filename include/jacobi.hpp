@@ -206,13 +206,27 @@ T jacobi_deriv(int n, double alpha, double beta, T xi);
 /**
  * \brief Value and derivative of \f$P_n^{\alpha,\beta}\f$ at one point, in one pass.
  *
- * Runs the recurrence (A.1.3) for the value together with its
- * \f$\xi\f$-derivative (D.2), started with (D.3):
+ * Runs the recurrence (A.1.3) for the value,
  * \f[
- *   a_n^1\,\bigl[P_{n+1}^{\alpha,\beta}\bigr]'
- *   = a_n^3\,P_n^{\alpha,\beta}
- *   + \bigl(a_n^2 + a_n^3 \xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'
- *   - a_n^4\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]'.
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * together with its \f$\xi\f$-derivative, Eq. (D.2) of the theory document,
+ * \f[
+ *   a_n^1\,\bigl[P_{n+1}^{\alpha,\beta}\bigr]'(\xi)
+ *   = a_n^3\,P_n^{\alpha,\beta}(\xi)
+ *   + \bigl(a_n^2 + a_n^3\,\xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'(\xi)
+ *   - a_n^4\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]'(\xi)
+ * \f]
+ * with the coefficients \f$a_n^1,\dots,a_n^4\f$ given in jacobi(). Both are
+ * started with (A.1.3) and (D.3):
+ * \f[
+ *   P_0^{\alpha,\beta}(\xi) = 1, \qquad
+ *   P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\,\xi\bigr]
+ * \f]
+ * \f[
+ *   \bigl[P_0^{\alpha,\beta}\bigr]'(\xi) = 0, \qquad
+ *   \bigl[P_1^{\alpha,\beta}\bigr]'(\xi) = \tfrac12\,(\alpha+\beta+2)
  * \f]
  * This is what the Newton iteration of jacobi_zeros() evaluates at every
  * step: one recurrence instead of two (jacobi() and jacobi_deriv()).
@@ -244,8 +258,25 @@ void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp);
 /**
  * \brief Values \f$p_i = P_n^{\alpha,\beta}(\xi_i)\f$ at \f$n_p\f$ points.
  *
- * Same recurrence as the single-point jacobi(), in its normalised form
- * (A.1.3'), register-blocked:
+ * Same recurrence as the single-point jacobi(): starting values and
+ * recursion relation (A.1.3),
+ * \f[
+ *   P_0^{\alpha,\beta}(\xi) = 1, \qquad
+ *   P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\,\xi\bigr]
+ * \f]
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * used in its normalised form (A.1.3'), i.e. divided by \f$a_n^1\f$,
+ * \f[
+ *   P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(A_n + B_n\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - C_n\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * \f[
+ *   A_n = \frac{a_n^2}{a_n^1},\qquad B_n = \frac{a_n^3}{a_n^1},\qquad C_n = \frac{a_n^4}{a_n^1}
+ * \f]
+ * and register-blocked:
  * \code
  * compute A_k, B_k, C_k once                  // k = 1 .. n-1
  * for each block of 32 points                 // xi, P_k, P_{k-1} in registers
@@ -281,7 +312,13 @@ void jacobi(int n, double alpha, double beta,
 /**
  * \brief Derivatives \f$dp_i = \frac{d}{d\xi}P_n^{\alpha,\beta}(\xi_i)\f$ at \f$n_p\f$ points.
  *
- * Uses (A.1.8): one call to the array version of jacobi() with parameters
+ * Uses (A.1.8), derivative by degree reduction:
+ * \f[
+ *   \frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)
+ *   = \frac12\,(n+\alpha+\beta+1)\,P_{n-1}^{\alpha+1,\beta+1}(\xi),
+ *   \qquad \frac{d}{d\xi}P_0^{\alpha,\beta}(\xi) = 0
+ * \f]
+ * that is, one call to the array version of jacobi() with parameters
  * \f$(n-1,\alpha+1,\beta+1)\f$, followed by the scaling
  * \f$\tfrac12(n+\alpha+\beta+1)\f$. Valid at \f$\xi_i=\pm1\f$.
  * Results are bitwise identical to the single-point jacobi_deriv().
@@ -305,23 +342,49 @@ void jacobi_deriv(int n, double alpha, double beta,
 /**
  * \brief Values and derivatives of \f$P_n^{\alpha,\beta}\f$ at \f$n_p\f$ points, in one pass.
  *
- * Runs the recurrence (A.1.3) for the values together with its
- * \f$\xi\f$-derivative, Eq. (D.2) of the theory document:
+ * Runs the recurrence (A.1.3) for the values,
  * \f[
- *   a_n^1\,\bigl[P_{n+1}^{\alpha,\beta}\bigr]'
- *   = a_n^3\,P_n^{\alpha,\beta}
- *   + \bigl(a_n^2 + a_n^3 \xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'
- *   - a_n^4\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]',
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
  * \f]
- * started with \f$[P_0^{\alpha,\beta}]' = 0\f$ and
- * \f$[P_1^{\alpha,\beta}]' = \tfrac12(\alpha+\beta+2)\f$ (D.3).
+ * together with its \f$\xi\f$-derivative, Eq. (D.2) of the theory document,
+ * \f[
+ *   a_n^1\,\bigl[P_{n+1}^{\alpha,\beta}\bigr]'(\xi)
+ *   = a_n^3\,P_n^{\alpha,\beta}(\xi)
+ *   + \bigl(a_n^2 + a_n^3\,\xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'(\xi)
+ *   - a_n^4\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]'(\xi)
+ * \f]
+ * with the coefficients \f$a_n^1,\dots,a_n^4\f$ given in jacobi(). Both are
+ * started with (A.1.3) and (D.3):
+ * \f[
+ *   P_0^{\alpha,\beta}(\xi) = 1, \qquad
+ *   P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\,\xi\bigr]
+ * \f]
+ * \f[
+ *   \bigl[P_0^{\alpha,\beta}\bigr]'(\xi) = 0, \qquad
+ *   \bigl[P_1^{\alpha,\beta}\bigr]'(\xi) = \tfrac12\,(\alpha+\beta+2)
+ * \f]
  * Like (A.1.8) it has no division by \f$1-\xi^2\f$ and holds at \f$\xi=\pm1\f$.
  *
  * \par Implementation
  * Register-blocked like jacobi(): for each block of 32 points, the four
  * recurrence variables (\f$P_k\f$, \f$P_{k-1}\f$ and their derivatives) stay
  * in registers for all \f$n\f$ steps, using the normalised forms (A.1.3') and
- * (D.2'). About \f$\times15\f$ against the reference implementation (double,
+ * (D.2'), i.e. the two relations above divided by \f$a_n^1\f$:
+ * \f[
+ *   P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(A_n + B_n\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - C_n\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * \f[
+ *   \bigl[P_{n+1}^{\alpha,\beta}\bigr]'(\xi)
+ *   = B_n\,P_n^{\alpha,\beta}(\xi)
+ *   + \bigl(A_n + B_n\,\xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'(\xi)
+ *   - C_n\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]'(\xi)
+ * \f]
+ * \f[
+ *   A_n = \frac{a_n^2}{a_n^1},\qquad B_n = \frac{a_n^3}{a_n^1},\qquad C_n = \frac{a_n^4}{a_n^1}
+ * \f]
+ * About \f$\times15\f$ against the reference implementation (double,
  * \f$n=16\f$, AVX-512, `-march=native`).
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
@@ -355,8 +418,17 @@ void jacobi_and_deriv(int n, double alpha, double beta,
  *   \mathbf{V}_{ik} = P_k^{\alpha,\beta}(\xi_i),
  *   \qquad i = 0,\dots,n_p-1,\quad k = 0,\dots,N,
  * \f]
- * in a single pass of the recurrence (A.1.3): each degree is computed exactly
- * once, instead of \f$N+1\f$ recurrences of increasing length.
+ * in a single pass of the recurrence (A.1.3),
+ * \f[
+ *   P_0^{\alpha,\beta}(\xi) = 1, \qquad
+ *   P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\,\xi\bigr]
+ * \f]
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * Each degree is computed exactly once and stored, instead of \f$N+1\f$
+ * recurrences of increasing length.
  *
  * With \f$\alpha=\beta=0\f$ and the nodes \f$\xi_i\f$ of a DG element,
  * \f$\mathbf{V}\f$ maps modal (Legendre) coefficients to nodal values,
@@ -401,7 +473,16 @@ void jacobi_all(int nmax, double alpha, double beta,
  * \brief Values \f$P_n^{\alpha,\beta}(\xi_i)\f$ for every element of a `std::vector`.
  *
  * Resizes `p` to `xi.size()` and calls
- * jacobi(int, double, double, const T*, std::size_t, T*).
+ * jacobi(int, double, double, const T*, std::size_t, T*), which evaluates
+ * the recursion relation (A.1.3) at every point:
+ * \f[
+ *   P_0^{\alpha,\beta}(\xi) = 1, \qquad
+ *   P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\,\xi\bigr]
+ * \f]
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
  * \param[in]  n      degree, \f$n \ge 0\f$
@@ -419,7 +500,13 @@ void jacobi(int n, double alpha, double beta,
  * \brief Derivatives \f$\frac{d}{d\xi}P_n^{\alpha,\beta}(\xi_i)\f$ for every element of a `std::vector`.
  *
  * Resizes `dp` to `xi.size()` and calls
- * jacobi_deriv(int, double, double, const T*, std::size_t, T*).
+ * jacobi_deriv(int, double, double, const T*, std::size_t, T*), which
+ * evaluates (A.1.8) at every point:
+ * \f[
+ *   \frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)
+ *   = \frac12\,(n+\alpha+\beta+1)\,P_{n-1}^{\alpha+1,\beta+1}(\xi),
+ *   \qquad \frac{d}{d\xi}P_0^{\alpha,\beta}(\xi) = 0
+ * \f]
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
  * \param[in]  n      degree, \f$n \ge 0\f$
@@ -516,27 +603,63 @@ T jacobi_norm2(int n, double alpha, double beta);
  *   \delta = -\frac{P_m(r)}{P_m'(r) - P_m(r)\sum_{j=0}^{k-1}\frac{1}{r-\xi_j}},
  *   \qquad r \leftarrow r + \delta .
  * \f]
- * The initial guess (D.8) is the Chebyshev zero
- * \f$-\cos\bigl(\tfrac{2k+1}{2m}\pi\bigr)\f$, averaged with the previous root
- * \f$\xi_{k-1}\f$ for \f$k>0\f$, as recommended in the book.
- * \f$P_m\f$ and \f$P_m'\f$ come from one pass of (A.1.3) and (D.2).
- * Root \f$k\f$ is accepted when \f$|\delta| \le 4\varepsilon\f$ (D.9), with
- * \f$\varepsilon\f$ the machine epsilon of `T`; since \f$|\xi|<1\f$ this is a
- * relative criterion.
+ * The initial guess (D.8) is the Chebyshev zero, averaged with the previous
+ * root \f$\xi_{k-1}\f$ for \f$k>0\f$, as recommended in the book:
+ * \f[
+ *   r^{(0)}_k = -\cos\Bigl(\frac{2k+1}{2m}\,\pi\Bigr),
+ *   \qquad
+ *   r^{(0)}_k \leftarrow \tfrac12\bigl(r^{(0)}_k + \xi_{k-1}\bigr) \quad (k>0)
+ * \f]
+ * \f$P_m\f$ and \f$P_m'\f$ come from one pass of (A.1.3) and (D.2):
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * \f[
+ *   a_n^1\,\bigl[P_{n+1}^{\alpha,\beta}\bigr]'(\xi)
+ *   = a_n^3\,P_n^{\alpha,\beta}(\xi)
+ *   + \bigl(a_n^2 + a_n^3\,\xi\bigr)\bigl[P_n^{\alpha,\beta}\bigr]'(\xi)
+ *   - a_n^4\,\bigl[P_{n-1}^{\alpha,\beta}\bigr]'(\xi)
+ * \f]
+ * Root \f$k\f$ is accepted when the stopping test (D.9) holds; since
+ * \f$|\xi|<1\f$ this is a relative criterion:
+ * \f[
+ *   |\delta| \le 4\,\varepsilon,
+ *   \qquad \varepsilon = \text{machine epsilon of } T
+ * \f]
+
  *
  * \par Additions to the book's algorithm
  * - **Reflection (D.10).** For \f$\alpha>\beta\f$ the zeros crowd towards
- *   \f$\xi=-1\f$, where the search starts, and Newton can fail. By (A.1.6) the
- *   zeros of \f$P_m^{\alpha,\beta}\f$ are the negated zeros of
- *   \f$P_m^{\beta,\alpha}\f$, which are computed instead.
+ *   \f$\xi=-1\f$, where the search starts, and Newton can fail. By the
+ *   symmetry relation (A.1.6),
+ *   \f[
+ *     P_n^{\alpha,\beta}(-\xi) = (-1)^n\,P_n^{\beta,\alpha}(\xi)
+ *   \f]
+ *   the zeros of \f$P_m^{\alpha,\beta}\f$ are the negated zeros of
+ *   \f$P_m^{\beta,\alpha}\f$, which are computed instead:
+ *   \f[
+ *     \xi^{\alpha,\beta}_{i,m} = -\,\xi^{\beta,\alpha}_{m-1-i,m}, \qquad i=0,\dots,m-1
+ *   \f]
  * - **Exact symmetry.** For \f$\alpha=\beta\f$ the zeros are made exactly
- *   symmetric, \f$\xi_{m-1-i}=-\xi_i\f$, and \f$\xi_{(m-1)/2}=0\f$ for odd
- *   \f$m\f$, so that odd functions are integrated to exactly zero.
+ *   symmetric, so that odd functions are integrated to exactly zero:
+ *   \f[
+ *     \xi_i \leftarrow \tfrac12\bigl(\xi_i-\xi_{m-1-i}\bigr),\qquad
+ *     \xi_{m-1-i} = -\xi_i,\qquad
+ *     \xi_{(m-1)/2}=0 \ \text{ for odd } m
+ *   \f]
  * - **Certification (D.11).** \f$P_m\f$ must change sign between consecutive
- *   points of \f$-1\f$, the midpoints of consecutive zeros, and \f$+1\f$. These
- *   \f$m\f$ sign changes prove that each computed zero sits alone in its own
- *   interval: none was missed or found twice. A failure raises an exception
- *   instead of returning wrong zeros.
+ *   cut points: \f$-1\f$, the midpoints of consecutive zeros, and \f$+1\f$,
+ *   \f[
+ *     c_0 = -1,\qquad c_i = \tfrac12\,(\xi_{i-1}+\xi_i)\quad (i=1,\dots,m-1),\qquad c_m = 1
+ *   \f]
+ *   \f[
+ *     \operatorname{sign} P_m^{\alpha,\beta}(c_i) \neq \operatorname{sign} P_m^{\alpha,\beta}(c_{i+1}),
+ *     \qquad i=0,\dots,m-1
+ *   \f]
+ *   These \f$m\f$ sign changes prove that each computed zero sits alone in
+ *   its own interval: none was missed or found twice. A failure raises an
+ *   exception instead of returning wrong zeros.
  * - The iteration limit is 1000. DG parameters need at most 11 iterations;
  *   far from the Chebyshev guess (e.g. \f$\alpha=\beta=20\f$) Newton first
  *   creeps towards the root and needs up to about 170.
@@ -551,7 +674,7 @@ T jacobi_norm2(int n, double alpha, double beta);
  * \f$m=32\f$, 80 µs for \f$m=64\f$, about 3 times faster than without these
  * optimisations; negligible in a solver, where it runs once.
  *
- * \par Accuracy and range (measured, \f$m \le 60\f$)
+ * \par Accuracy and range (measured for m up to 60)
  * - `double`: within \f$2\times10^{-16}\f$ of the `long double` zeros (1–2 ulp)
  *   for \f$\alpha,\beta\f$ up to 100; Polylib's eigenvalue method agrees only
  *   to \f$10^{-15}\f$.
@@ -583,6 +706,17 @@ void jacobi_zeros(int m, double alpha, double beta, T* z);
  *
  * Convenience overload of jacobi_zeros(int, double, double, T*). The type is
  * `double` unless requested explicitly, e.g. `jacobi_zeros<long double>(m, a, b)`.
+ *
+ * The zeros returned satisfy
+ * \f[
+ *   P_m^{\alpha,\beta}(\xi_i) = 0, \qquad -1 < \xi_0 < \xi_1 < \dots < \xi_{m-1} < 1 ,
+ * \f]
+ * and are found by Newton's method with deflation, step (D.7):
+ * \f[
+ *   \delta = -\frac{P_m^{\alpha,\beta}(r)}
+ *                  {\bigl[P_m^{\alpha,\beta}\bigr]'(r) - P_m^{\alpha,\beta}(r)\,\displaystyle\sum_{j=0}^{k-1}\frac{1}{r-\xi_j}},
+ *   \qquad r \leftarrow r + \delta
+ * \f]
  *
  * \tparam    T      floating-point type, `double` by default
  * \param[in] m      number of zeros, \f$m \ge 0\f$
