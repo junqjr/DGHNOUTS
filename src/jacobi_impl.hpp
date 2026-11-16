@@ -54,6 +54,17 @@ namespace internal {
 
 /**
  * \brief  Validate the arguments common to all Jacobi routines.
+ *
+ * \par Equation
+ * The polynomials \f$P_n^{\alpha,\beta}\f$ are defined by their orthogonality
+ * with the weight \f$(1-\xi)^\alpha(1+\xi)^\beta\f$, (A.1.7):
+ * \f[
+ *   \int_{-1}^{1}(1-\xi)^\alpha(1+\xi)^\beta\,P_n^{\alpha,\beta}(\xi)\,P_m^{\alpha,\beta}(\xi)\,d\xi = 0,
+ *   \qquad n \neq m
+ * \f]
+ * This integral exists only for \f$\alpha>-1\f$ and \f$\beta>-1\f$, which is
+ * what the routine checks, together with \f$n\ge0\f$.
+ *
  * \param[in] n      degree; must be \f$\ge 0\f$
  * \param[in] alpha  must be finite and \f$> -1\f$
  * \param[in] beta   must be finite and \f$> -1\f$
@@ -82,6 +93,15 @@ inline void check_args(int n, double alpha, double beta)
  * only, e.g. for \f$\alpha=0.3\f$, where \f$\alpha+1\f$ is not exact in
  * `double`.)
  *
+ * \par Equation
+ * (A.1.8), derivative by degree reduction; the parameters of the polynomial
+ * on the right are \f$\alpha+1\f$ and \f$\beta+1\f$:
+ * \f[
+ *   \frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)
+ *   = \frac12\,(n+\alpha+\beta+1)\,P_{n-1}^{\alpha+1,\beta+1}(\xi),
+ *   \qquad \frac{d}{d\xi}P_0^{\alpha,\beta}(\xi) = 0
+ * \f]
+ *
  * \tparam    T  floating-point type
  * \param[in] v  \f$\alpha\f$ or \f$\beta\f$
  * \return    \f$v+1\f$
@@ -98,8 +118,21 @@ inline T plus_one(double v)
  * \brief Coefficients \f$a_n^1,\dots,a_n^4\f$ of the recurrence (A.1.3),
  *        in the book's notation.
  *
- * (A.1.3) reads
- * \f$a_n^1 P_{n+1} = (a_n^2 + a_n^3 \xi)\,P_n - a_n^4 P_{n-1}\f$.
+ * \par Equation
+ * (A.1.3), three-term recursion relation of the Jacobi polynomials:
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * with the four coefficients stored in this structure:
+ * \f[
+ * \begin{aligned}
+ *   a_n^1 &= 2(n+1)(n+\alpha+\beta+1)(2n+\alpha+\beta), &
+ *   a_n^2 &= (2n+\alpha+\beta+1)(\alpha^2-\beta^2),\\
+ *   a_n^3 &= (2n+\alpha+\beta)(2n+\alpha+\beta+1)(2n+\alpha+\beta+2), &
+ *   a_n^4 &= 2(n+\alpha)(n+\beta)(2n+\alpha+\beta+2)
+ * \end{aligned}
+ * \f]
  *
  * \tparam T floating-point type of the coefficients
  */
@@ -121,6 +154,23 @@ struct RecCoef {
  *
  * In the routines, `n` is the target degree, so the recurrence step is called
  * with the loop index: `rec_coef(k, ...)`, \f$k = 1,\dots,n-1\f$.
+ *
+ * \par Equations
+ * (A.1.3), the recursion relation in which the coefficients appear:
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * The coefficients returned, with the code's `c` \f$= 2n+\alpha+\beta\f$ and
+ * `apb` \f$= \alpha+\beta\f$:
+ * \f[
+ * \begin{aligned}
+ *   a_n^1 &= 2(n+1)(n+\alpha+\beta+1)(2n+\alpha+\beta), &
+ *   a_n^2 &= (2n+\alpha+\beta+1)(\alpha^2-\beta^2),\\
+ *   a_n^3 &= (2n+\alpha+\beta)(2n+\alpha+\beta+1)(2n+\alpha+\beta+2), &
+ *   a_n^4 &= 2(n+\alpha)(n+\beta)(2n+\alpha+\beta+2)
+ * \end{aligned}
+ * \f]
  *
  * \tparam    T      floating-point type in which the coefficients are computed
  * \param[in] n      index of (A.1.3), \f$n \ge 1\f$
@@ -147,8 +197,25 @@ inline RecCoef<T> rec_coef(int n, T alpha, T beta)
  *         \f$P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\xi\bigr]\f$,
  *         the second starting value of (A.1.3).
  *
- * Its derivative, \f$\tfrac12(\alpha+\beta+2)\f$, is the starting value (D.3)
- * of the derivative recurrence.
+ * \par Equations
+ * Starting values of the recursion relation (A.1.3); this function returns
+ * the second one:
+ * \f[
+ *   P_0^{\alpha,\beta}(\xi) = 1, \qquad
+ *   P_1^{\alpha,\beta}(\xi) = \tfrac12\bigl[\alpha-\beta+(\alpha+\beta+2)\,\xi\bigr]
+ * \f]
+ * They start the recurrence
+ * \f[
+ *   a_n^1\,P_{n+1}^{\alpha,\beta}(\xi)
+ *   = \bigl(a_n^2 + a_n^3\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - a_n^4\,P_{n-1}^{\alpha,\beta}(\xi)
+ * \f]
+ * The derivative of \f$P_1^{\alpha,\beta}\f$ is a constant, the starting value
+ * (D.3) of the derivative recurrence (written directly in the routines that
+ * need it):
+ * \f[
+ *   \bigl[P_0^{\alpha,\beta}\bigr]'(\xi) = 0, \qquad
+ *   \bigl[P_1^{\alpha,\beta}\bigr]'(\xi) = \tfrac12\,(\alpha+\beta+2)
+ * \f]
  *
  * \tparam    T      floating-point type
  * \param[in] alpha  \f$\alpha\f$
@@ -164,6 +231,21 @@ inline T p1(T alpha, T beta, T xi)
 
 /**
  * \brief  Report that Newton did not converge for a zero (jacobi_zeros()).
+ *
+ * \par Equations
+ * The Newton step with deflation (D.7) is repeated until the stopping test
+ * (D.9) holds; this function is called when it never does (or when the
+ * iterate leaves \f$(-1,1)\f$):
+ * \f[
+ *   \delta = -\frac{P_m^{\alpha,\beta}(r)}
+ *                  {\bigl[P_m^{\alpha,\beta}\bigr]'(r) - P_m^{\alpha,\beta}(r)\,\displaystyle\sum_{j=0}^{k-1}\frac{1}{r-\xi_j}},
+ *   \qquad r \leftarrow r + \delta
+ * \f]
+ * \f[
+ *   |\delta| \le 4\,\varepsilon,
+ *   \qquad \varepsilon = \text{machine epsilon of } T
+ * \f]
+ *
  * \tparam    T  floating-point type (the message suggests `double` for `float`)
  * \param[in] k  index of the zero
  * \param[in] m  degree of the polynomial
@@ -180,6 +262,15 @@ template <typename T>
 
 /**
  * \brief  Sort the zeros in increasing order and check that they are distinct.
+ *
+ * \par Equation
+ * The \f$m\f$ zeros of \f$P_m^{\alpha,\beta}\f$ are real, simple and inside the
+ * interval, so after sorting they must satisfy
+ * \f[
+ *   -1 < \xi_0 < \xi_1 < \dots < \xi_{m-1} < 1 .
+ * \f]
+ * Newton with deflation (D.7) finds them in no guaranteed order.
+ *
  * \tparam        T  floating-point type
  * \param[in]     m  number of zeros
  * \param[in,out] z  the zeros
@@ -198,10 +289,21 @@ void sort_zeros(int m, T* z)
 /**
  * \brief  Make the zeros exactly symmetric, for \f$\alpha=\beta\f$.
  *
- * Then \f$P_m\f$ has the parity of \f$m\f$ (A.1.6):
- * \f$\xi_i \leftarrow \tfrac12(\xi_i-\xi_{m-1-i})\f$, \f$\xi_{m-1-i}=-\xi_i\f$,
- * and the middle zero is exactly 0 for odd \f$m\f$. Odd functions are then
- * integrated to exactly zero.
+ * \par Equations
+ * Symmetry relation (A.1.6):
+ * \f[
+ *   P_n^{\alpha,\beta}(-\xi) = (-1)^n\,P_n^{\beta,\alpha}(\xi)
+ * \f]
+ * For \f$\alpha=\beta\f$ it says that \f$P_m^{\alpha,\alpha}\f$ is even or odd
+ * like \f$m\f$, so its zeros come in pairs \f$\pm\xi\f$. The computed zeros
+ * have this property only up to round-off; it is made exact with
+ * \f[
+ *   \xi_i \leftarrow \tfrac12\bigl(\xi_i-\xi_{m-1-i}\bigr),\qquad
+ *   \xi_{m-1-i} = -\xi_i,\qquad
+ *   \xi_{(m-1)/2}=0 \ \text{ for odd } m
+ * \f]
+ * A quadrature rule built on these nodes then integrates odd functions to
+ * exactly zero.
  *
  * \tparam        T  floating-point type
  * \param[in]     m  number of zeros
@@ -221,6 +323,18 @@ void symmetrize_zeros(int m, T* z)
 /**
  * \brief  Cut points of the certification (D.11):
  *         \f$c_0=-1\f$, \f$c_i=\tfrac12(\xi_{i-1}+\xi_i)\f$, \f$c_m=1\f$.
+ *
+ * \par Equations
+ * The end points of the interval and the midpoints of consecutive zeros:
+ * \f[
+ *   c_0 = -1,\qquad c_i = \tfrac12\,(\xi_{i-1}+\xi_i)\quad (i=1,\dots,m-1),\qquad c_m = 1
+ * \f]
+ * certify_zeros() then checks (D.11) at these points:
+ * \f[
+ *   \operatorname{sign} P_m^{\alpha,\beta}(c_i) \neq \operatorname{sign} P_m^{\alpha,\beta}(c_{i+1}),
+ *   \qquad i=0,\dots,m-1
+ * \f]
+ *
  * \tparam    T  floating-point type
  * \param[in] m  number of zeros, \f$m\ge1\f$
  * \param[in] z  the zeros, sorted
@@ -238,6 +352,17 @@ std::vector<T> cut_points(int m, const T* z)
 
 /**
  * \brief  Certification (D.11): \f$P_m\f$ must change sign between consecutive cut points.
+ *
+ * \par Equations
+ * With the cut points of cut_points(),
+ * \f[
+ *   c_0 = -1,\qquad c_i = \tfrac12\,(\xi_{i-1}+\xi_i)\quad (i=1,\dots,m-1),\qquad c_m = 1
+ * \f]
+ * the routine requires (D.11)
+ * \f[
+ *   \operatorname{sign} P_m^{\alpha,\beta}(c_i) \neq \operatorname{sign} P_m^{\alpha,\beta}(c_{i+1}),
+ *   \qquad i=0,\dots,m-1
+ * \f]
  *
  * The \f$m+1\f$ cut points delimit \f$m\f$ intervals, each containing one
  * computed zero. \f$m\f$ sign changes prove that each interval holds exactly
