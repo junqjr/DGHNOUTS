@@ -7,7 +7,7 @@
  *          to round-off (see jacobi_impl.hpp):
  *          - `dg::reference` (jacobi_reference.cpp): the book's equations,
  *            written to be read;
- *          - `dg::optimized` (jacobi_optimized.cpp): the same, 3 to 9 times
+ *          - `dg::optimized` (jacobi_optimized.cpp): the same, 15 to 40 times
  *            faster for many points.
  *
  *          The public functions below forward to one of them. The choice is
@@ -101,7 +101,7 @@ std::vector<T> jacobi_zeros(int m, double alpha, double beta)
 }
 
 // ===========================================================================
-// Norm (one implementation: six lgamma calls, nothing to optimise)
+// Norm (one implementation: n multiplications, nothing to optimise)
 // ===========================================================================
 template <typename T>
 T jacobi_norm2(int n, double alpha, double beta)
@@ -109,25 +109,37 @@ T jacobi_norm2(int n, double alpha, double beta)
     internal::check_args(n, alpha, beta);
     const T a = static_cast<T>(alpha), b = static_cast<T>(beta);
     const T apb = a + b;
-    const T ln2 = std::log(T(2));
 
     // (D.5): h_0 = 2^{a+b+1} Gamma(a+1) Gamma(b+1) / Gamma(a+b+2)
     // (A.1.7) is 0 * inf at n = 0 when a + b = -1 (Chebyshev); (D.5) is the
     // same value, using (2n+a+b+1) Gamma(n+a+b+1) = Gamma(a+b+2) at n = 0.
-    if (n == 0) {
-        return std::exp((apb + T(1)) * ln2
-                        + std::lgamma(a + T(1)) + std::lgamma(b + T(1))
-                        - std::lgamma(apb + T(2)));
+    T h;
+    if (apb + T(2) < T(30)) {
+        // Usual parameters: the Gamma functions themselves (all < 1e34, no
+        // overflow even in float). The quotient is <= 1.
+        h = std::exp2(apb + T(1))
+          * (std::tgamma(a + T(1)) * std::tgamma(b + T(1)) / std::tgamma(apb + T(2)));
+    } else {
+        // Large parameters: Gamma would overflow, use logarithms
+        h = std::exp((apb + T(1)) * std::log(T(2))
+                     + std::lgamma(a + T(1)) + std::lgamma(b + T(1))
+                     - std::lgamma(apb + T(2)));
     }
+    if (n == 0) return h;
 
-    // (A.1.7), from logarithms: Gamma(z) overflows double for z > 171.6
-    //   h_n = 2^{a+b+1} / (2n+a+b+1) * Gamma(n+a+1) Gamma(n+b+1) / (n! Gamma(n+a+b+1))
-    const T nn = static_cast<T>(n);
-    const T log_h = (apb + T(1)) * ln2 - std::log(T(2) * nn + apb + T(1))
-                  + std::lgamma(nn + a + T(1)) + std::lgamma(nn + b + T(1))
-                  - std::lgamma(nn + T(1))                  // log n!
-                  - std::lgamma(nn + apb + T(1));
-    return std::exp(log_h);
+    // (D.5'): h_k from h_{k-1}, the quotient of (A.1.7) at k and k-1.
+    //   h_1 / h_0     = (a+1)(b+1) / (a+b+3)
+    //   h_k / h_{k-1} = (2k+a+b-1)(k+a)(k+b) / [(2k+a+b+1) k (k+a+b)],   k >= 2
+    // Each factor is close to 1, so nothing cancels: the error grows like a
+    // few rounding errors per step. (Evaluating (A.1.7) from logarithms
+    // subtracts lgamma terms of size n ln n and loses that many digits:
+    // 8e-15 at n = 20, 2e-13 at n = 300 in double.)
+    h *= (a + T(1)) * (b + T(1)) / (apb + T(3));
+    for (int k = 2; k <= n; ++k) {
+        const T c = T(2) * k + apb;                             // 2k + a + b
+        h *= ((c - T(1)) * (k + a) * (k + b)) / ((c + T(1)) * k * (k + apb));
+    }
+    return h;
 }
 
 // ===========================================================================

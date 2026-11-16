@@ -21,6 +21,7 @@ namespace reference {
 
 using internal::check_args;
 using internal::p1;
+using internal::plus_one;
 using internal::rec_coef;
 using internal::RecCoef;
 
@@ -28,12 +29,21 @@ using internal::RecCoef;
 // One point
 // ===========================================================================
 
-template <typename T>
-T jacobi(int n, double alpha, double beta, T xi)
-{
-    check_args(n, alpha, beta);
-    const T a = static_cast<T>(alpha), b = static_cast<T>(beta);
+namespace {
 
+/**
+ * \brief  \f$P_n^{a,b}(\xi)\f$ by the recurrence (A.1.3), with \f$\alpha,\beta\f$ already
+ *         converted to `T` and checked. Used by jacobi() and jacobi_deriv().
+ * \tparam    T   floating-point type
+ * \param[in] n   degree, \f$n \ge 0\f$
+ * \param[in] a   \f$\alpha\f$
+ * \param[in] b   \f$\beta\f$
+ * \param[in] xi  evaluation point \f$\xi\f$
+ * \return    \f$P_n^{a,b}(\xi)\f$
+ */
+template <typename T>
+T recurrence(int n, T a, T b, T xi)
+{
     // Starting values of (A.1.3): P_0 = 1, P_1 = (a - b + (a + b + 2) xi) / 2
     if (n == 0) return T(1);
     T p_km1 = T(1);                      // P_{k-1}
@@ -50,6 +60,15 @@ T jacobi(int n, double alpha, double beta, T xi)
     return p_k;                          // P_n
 }
 
+} // namespace
+
+template <typename T>
+T jacobi(int n, double alpha, double beta, T xi)
+{
+    check_args(n, alpha, beta);
+    return recurrence(n, static_cast<T>(alpha), static_cast<T>(beta), xi);
+}
+
 template <typename T>
 T jacobi_deriv(int n, double alpha, double beta, T xi)
 {
@@ -59,7 +78,7 @@ T jacobi_deriv(int n, double alpha, double beta, T xi)
     // (A.1.8): d/dxi P_n^{a,b} = 1/2 (n + a + b + 1) P_{n-1}^{a+1,b+1}
     // Valid at xi = +/-1, unlike (A.1.4), which divides by 1 - xi^2.
     const T s = T(0.5) * (T(n) + static_cast<T>(alpha) + static_cast<T>(beta) + T(1));
-    return s * jacobi(n - 1, alpha + 1.0, beta + 1.0, xi);
+    return s * recurrence(n - 1, plus_one<T>(alpha), plus_one<T>(beta), xi);
 }
 
 template <typename T>

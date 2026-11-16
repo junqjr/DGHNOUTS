@@ -193,9 +193,15 @@ without an internet connection. Graphviz (`dot`) is optional and adds call graph
 | `gcc` | GNU `g++` | default for development |
 | `clang` | LLVM `clang++` | |
 | `nvhpc` | NVIDIA HPC SDK `nvc++` | load the `nvidia-compilers` module on Jean-Zay first |
-| `intel` | Intel oneAPI `icpx` | |
+| `intel` | Intel oneAPI `icpx` | built with `-fp-model=precise` (see below) |
 | `gcc-debug` | GNU `g++` | `-g` with AddressSanitizer and UBSan |
 | `gcc-reference` | GNU `g++` | reference (readable) kernels instead of the optimised ones |
+
+The code needs IEEE floating-point arithmetic. Do not add `-ffast-math`,
+`-Ofast` or `-ffinite-math-only`: the compiler would then assume that NaN never
+occurs and remove the checks that protect the zero finder, so
+`src/jacobi_impl.hpp` stops the compilation with an explicit error. For
+`icpx`, whose default is `-fp-model=fast`, the build adds `-fp-model=precise`.
 
 Add `-DDGPOLY_NATIVE=ON` to optimise for the CPU of the build machine
 (`-march=native`, `-xHost` or `-tp=native` depending on the compiler).
@@ -217,7 +223,7 @@ standard-element coordinate is ξ (`xi`), as in Karniadakis & Sherwin, Chapter 2
 | `jacobi_deriv(n, a, b, xi, np, dp)` | P′<sub>n</sub> at np points | (A.1.8) |
 | `jacobi_and_deriv(n, a, b, xi, np, p, dp)` | P<sub>n</sub> and P′<sub>n</sub> at np points, one pass | (A.1.3), (D.2) |
 | `jacobi_all(nmax, a, b, xi, np, V)` | P<sub>0</sub> … P<sub>nmax</sub> (Vandermonde matrix) | (D.4) |
-| `jacobi_norm2(n, a, b)` | ‖P<sub>n</sub><sup>(α,β)</sup>‖² with the Jacobi weight | (A.1.7), (D.5) |
+| `jacobi_norm2(n, a, b)` | ‖P<sub>n</sub><sup>(α,β)</sup>‖² with the Jacobi weight | (A.1.7), (D.5), (D.5′) |
 | `jacobi_zeros(m, a, b, z)` | the m zeros of P<sub>m</sub><sup>(α,β)</sup>, increasing | B.2, (D.7)–(D.11) |
 
 All functions are templates on the floating-point type, compiled for `float`,

@@ -317,15 +317,24 @@ int main()
             }
         }
         // float: 2^-24 = 6e-8 per operation, amplified by the recurrence (values
-        // up to 1e-5, derivatives up to 7e-5 at n = 20) and by the cancellation
-        // between the large lgamma terms of the norm (~1e-5). Measured, largest
-        // over both implementations with and without FMA; tolerances 2x that.
+        // up to 1e-5, derivatives up to 7e-5 at n = 20). Measured, largest over
+        // both implementations with and without FMA; tolerances 2x that.
+        // The norms come from the product (D.5'), without cancellation:
+        // 4e-7 in float, 1e-15 in double.
         report("float  vs long double: values,      all (a,b)", ef_val, 2e-5);
         report("float  vs long double: derivatives, all (a,b)", ef_der, 2e-4);
-        report("float  vs long double: norms,       all (a,b)", ef_nrm, 1e-4);
+        report("float  vs long double: norms,       all (a,b)", ef_nrm, 2e-6);
         report("double vs long double: values,      all (a,b)", ed_val, 1e-13);
         report("double vs long double: derivatives, all (a,b)", ed_der, 1e-12);
-        report("double vs long double: norms,       all (a,b)", ed_nrm, 1e-13);
+        report("double vs long double: norms,       all (a,b)", ed_nrm, 1e-14);
+
+        // Norm at high degree against the closed form h_n^{0,0} = 2/(2n+1).
+        // (From logarithms of Gamma the error was 8e-15 at n = 20 and 2e-13
+        // at n = 300.)
+        long double e_leg = 0.0L;
+        for (int n = 0; n <= 300; ++n)
+            e_leg = std::max(e_leg, std::fabs(dg::jacobi_norm2(n, 0.0, 0.0) * (2.0L * n + 1.0L) / 2.0L - 1.0L));
+        report("double: Legendre norm 2/(2n+1), n = 0..300", e_leg, 1e-14);
         // x86 80-bit: eps 1e-19; Arm IEEE quad: eps 2e-34. Either way below double's 2e-16.
         report("long double end-point value (A.1.5),  all (a,b)", ld_end, 1e-16);
     }

@@ -34,6 +34,19 @@
 #include <type_traits>
 #include <vector>
 
+// ---------------------------------------------------------------------------
+// IEEE arithmetic is required. With -ffast-math, -Ofast, -ffinite-math-only
+// (GCC, Clang) or -fp-model=fast=2 (Intel) the compiler assumes that NaN and
+// infinity never occur and deletes the std::isfinite tests that protect
+// jacobi_zeros(): a NaN then reaches std::sort, which writes outside the
+// array (observed: segmentation fault with clang++ -ffast-math). These modes
+// also reorder the operations, so the single-point and array routines no
+// longer agree bitwise. The CMake build never sets them.
+// ---------------------------------------------------------------------------
+#if defined(__FAST_MATH__) || (defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__ > 0)
+#error "DGHNOUTS needs IEEE floating-point arithmetic: remove -ffast-math / -Ofast / -ffinite-math-only (Intel icpx: use -fp-model=precise)."
+#endif
+
 namespace dg {
 
 /// Helpers shared by the two implementations (not part of the public interface).
@@ -42,18 +55,43 @@ namespace internal {
 /**
  * \brief  Validate the arguments common to all Jacobi routines.
  * \param[in] n      degree; must be \f$\ge 0\f$
- * \param[in] alpha  must be \f$> -1\f$
- * \param[in] beta   must be \f$> -1\f$
+ * \param[in] alpha  must be finite and \f$> -1\f$
+ * \param[in] beta   must be finite and \f$> -1\f$
  * \throws std::invalid_argument otherwise. For \f$\alpha\le-1\f$ or
  *         \f$\beta\le-1\f$ the weight \f$(1-\xi)^\alpha(1+\xi)^\beta\f$ is not
- *         integrable and the polynomials are not orthogonal.
+ *         integrable and the polynomials are not orthogonal. NaN and infinite
+ *         parameters are rejected too: the test is written `!(alpha > -1)`
+ *         because every comparison with NaN is false, so `alpha <= -1` would
+ *         let a NaN through.
  */
 inline void check_args(int n, double alpha, double beta)
 {
     if (n < 0)
         throw std::invalid_argument("jacobi: n must be >= 0, got " + std::to_string(n));
-    if (alpha <= -1.0 || beta <= -1.0)
-        throw std::invalid_argument("jacobi: alpha and beta must be > -1");
+    if (!(alpha > -1.0) || !(beta > -1.0) || !std::isfinite(alpha) || !std::isfinite(beta))
+        throw std::invalid_argument("jacobi: alpha and beta must be finite and > -1");
+}
+
+/**
+ * \brief  \f$v+1\f$ converted to `T`, for the parameters \f$\alpha+1\f$,
+ *         \f$\beta+1\f$ of the derivative formula (A.1.8).
+ *
+ * The sum is rounded once, in the wider of `double` and `T`: in `double` for
+ * `float` and `double`, in `T` for `long double`. (Adding in `double` and then
+ * converting would leave a `long double` derivative with `double` accuracy
+ * only, e.g. for \f$\alpha=0.3\f$, where \f$\alpha+1\f$ is not exact in
+ * `double`.)
+ *
+ * \tparam    T  floating-point type
+ * \param[in] v  \f$\alpha\f$ or \f$\beta\f$
+ * \return    \f$v+1\f$
+ */
+template <typename T>
+inline T plus_one(double v)
+{
+    if (std::numeric_limits<T>::digits > std::numeric_limits<double>::digits)
+        return static_cast<T>(v) + T(1);
+    return static_cast<T>(v + 1.0);
 }
 
 /**
