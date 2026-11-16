@@ -4,8 +4,9 @@
  *          recurrence, register blocking, fused multiply-add.
  *
  * \details Computes the same quantities as the reference implementation
- *          (jacobi_reference.cpp, read that one first), 3 to 9 times faster
- *          for many points (theory document \theorypdf, Section 2.6):
+ *          (jacobi_reference.cpp, read that one first), 15 to 40 times faster
+ *          for many points and 3 times faster for the zeros (theory document
+ *          \theorypdf, Section 2.6):
  *          - normalised recurrence (A.1.3'), coefficients tabulated once per call;
  *          - register blocking: the recurrence runs on blocks of 32 points held
  *            in SIMD registers;
@@ -25,6 +26,7 @@ namespace optimized {
 
 using internal::check_args;
 using internal::p1;
+using internal::plus_one;
 using internal::rec_coef;
 using internal::RecCoef;
 
@@ -371,12 +373,21 @@ inline T deflation_sum(T r, const T* z, int k)
 // the new value by a1, which puts the division's ~14-cycle latency on the
 // chain). Same operations as the block kernels, hence bitwise identical.
 // ===========================================================================
-template <typename T>
-T jacobi(int n, double alpha, double beta, T xi)
-{
-    check_args(n, alpha, beta);
-    const T a = static_cast<T>(alpha), b = static_cast<T>(beta);
+namespace {
 
+/**
+ * \brief  \f$P_n^{a,b}(\xi)\f$ by (A.1.3'), with \f$\alpha,\beta\f$ already
+ *         converted to `T` and checked. Used by jacobi() and jacobi_deriv().
+ * \tparam    T   floating-point type
+ * \param[in] n   degree, \f$n \ge 0\f$
+ * \param[in] a   \f$\alpha\f$
+ * \param[in] b   \f$\beta\f$
+ * \param[in] xi  evaluation point \f$\xi\f$
+ * \return    \f$P_n^{a,b}(\xi)\f$
+ */
+template <typename T>
+inline T value_point(int n, T a, T b, T xi)
+{
     // Starting values of (A.1.3)
     T pm = T(1);                                         // P_0
     if (n == 0) return pm;
@@ -392,6 +403,15 @@ T jacobi(int n, double alpha, double beta, T xi)
     return pk;                                           // P_n
 }
 
+} // namespace
+
+template <typename T>
+T jacobi(int n, double alpha, double beta, T xi)
+{
+    check_args(n, alpha, beta);
+    return value_point(n, static_cast<T>(alpha), static_cast<T>(beta), xi);
+}
+
 template <typename T>
 T jacobi_deriv(int n, double alpha, double beta, T xi)
 {
@@ -401,7 +421,7 @@ T jacobi_deriv(int n, double alpha, double beta, T xi)
     // (A.1.8): d/dxi P_n^{a,b} = 1/2 (n+a+b+1) P_{n-1}^{a+1,b+1}
     // Valid at xi = +/-1, unlike (A.1.4), which divides by 1 - xi^2.
     const T s = T(0.5) * (T(n) + static_cast<T>(alpha) + static_cast<T>(beta) + T(1));
-    return s * jacobi(n - 1, alpha + 1.0, beta + 1.0, xi);
+    return s * value_point(n - 1, plus_one<T>(alpha), plus_one<T>(beta), xi);
 }
 
 template <typename T>
@@ -462,7 +482,7 @@ void jacobi_deriv(int n, double alpha, double beta,
     }
     // (A.1.8): recurrence of degree n-1 with (a+1, b+1), scaled inside the
     // block kernel (no second pass over dp)
-    const T a1 = static_cast<T>(alpha + 1.0), b1 = static_cast<T>(beta + 1.0);
+    const T a1 = plus_one<T>(alpha), b1 = plus_one<T>(beta);     // as in the single-point version
     const T s  = T(0.5) * (T(n) + static_cast<T>(alpha) + static_cast<T>(beta) + T(1));
     if (n == 1) {                                        // P_0^{a+1,b+1} = 1
         for (std::size_t i = 0; i < np; ++i) dp[i] = s * T(1);
@@ -509,7 +529,7 @@ void jacobi_all(int nmax, double alpha, double beta,
     }
     // Register blocks of points: each block fills its own rows of V, so every
     // row is written while it is in L1 (the earlier version wrote V column by
-    // column, touching every row at every degree: 7x slower on 10^6 points).
+    // column, touching every row at every degree: 2.6x slower on 10^6 points).
     const T a = static_cast<T>(alpha), b = static_cast<T>(beta);
     const RecTable<T> t(nmax, a, b);
     const std::size_t ld = static_cast<std::size_t>(nmax) + 1;

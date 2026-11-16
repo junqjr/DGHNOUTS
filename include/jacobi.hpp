@@ -17,15 +17,17 @@
  *          | dg::jacobi_deriv()     | \f$\frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)\f$ | (A.1.8)        | Sec. 2.3 |
  *          | dg::jacobi_and_deriv() | both, in one pass                            | (A.1.3), (D.2) | Sec. 2.3 |
  *          | dg::jacobi_all()       | \f$P_0,\dots,P_N\f$ (Vandermonde)           | (D.4)          | Sec. 2.4 |
- *          | dg::jacobi_norm2()     | \f$h_n^{\alpha,\beta}\f$                    | (A.1.7), (D.5) | Sec. 2.5 |
+ *          | dg::jacobi_norm2()     | \f$h_n^{\alpha,\beta}\f$                    | (A.1.7), (D.5), (D.5') | Sec. 2.5 |
  *          | dg::jacobi_zeros()     | zeros \f$\xi_{i,m}^{\alpha,\beta}\f$ of \f$P_m^{\alpha,\beta}\f$ | B.2, (D.7)–(D.11) | Sec. 4 |
  *
  *          **Conventions** (all functions):
  *          - namespace `dg`; the standard-element coordinate is `xi` (\f$\xi\f$);
  *          - templates on the floating-point type `T`, explicitly instantiated for
  *            `float`, `double` and `long double` (see \ref precision "Precision");
- *          - \f$n \ge 0\f$ and \f$\alpha,\beta > -1\f$, otherwise
+ *          - \f$n \ge 0\f$ and \f$\alpha,\beta > -1\f$ (finite), otherwise
  *            `std::invalid_argument` is thrown;
+ *          - IEEE arithmetic is required: the code does not compile with
+ *            `-ffast-math`, `-Ofast` or `-ffinite-math-only`;
  *          - array routines take a raw pointer and a size `(xi, np)`, so they work
  *            on any contiguous storage (`std::vector::data()`, C arrays, Kokkos
  *            host views). They are register-blocked: the recurrence runs on
@@ -84,8 +86,8 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  * - `double` is the default and the reference precision.
  * - `float` keeps only 4 to 5 correct digits for \f$n\le20\f$: relative
  *   errors measured against `long double` reach \f$10^{-5}\f$ for the
- *   values, \f$7\times10^{-5}\f$ for the derivatives and \f$10^{-5}\f$ for
- *   the norms, since the recurrence and the `lgamma` cancellation amplify the
+ *   values and \f$7\times10^{-5}\f$ for the derivatives (\f$4\times10^{-7}\f$
+ *   for the norms), since the recurrence amplifies the
  *   \f$6\times10^{-8}\f$ rounding of each operation. Use it only to study the
  *   effect of single precision: nodes, weights and matrices for a
  *   single-precision solver should be computed in `double` and converted
@@ -160,7 +162,7 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  * \param[in] beta   weight parameter \f$\beta > -1\f$
  * \param[in] xi     evaluation point \f$\xi\f$; any real value, normally \f$\xi\in[-1,1]\f$
  * \return    \f$P_n^{\alpha,\beta}(\xi)\f$
- * \throws    std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws    std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
  * \theorypdf, Section 2.2, Eq. (A.1.3).
@@ -193,7 +195,7 @@ T jacobi(int n, double alpha, double beta, T xi);
  * \param[in] beta   weight parameter \f$\beta > -1\f$
  * \param[in] xi     evaluation point \f$\xi\f$, including \f$\xi=\pm1\f$
  * \return    \f$\frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)\f$
- * \throws    std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws    std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
  * \theorypdf, Section 2.3, Eqs. (A.1.4) and (A.1.8).
@@ -224,7 +226,7 @@ T jacobi_deriv(int n, double alpha, double beta, T xi);
  * \param[in]  xi     evaluation point \f$\xi\f$
  * \param[out] p      \f$P_n^{\alpha,\beta}(\xi)\f$
  * \param[out] dp     \f$\frac{d}{d\xi}P_n^{\alpha,\beta}(\xi)\f$
- * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
  * \theorypdf, Section 2.3, Eqs. (A.1.3), (D.2) and (D.3).
@@ -256,9 +258,8 @@ void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp);
  * The operation count is \f$O(n\,n_p)\f$, as for \f$n_p\f$ scalar calls. The
  * speed-up comes from SIMD, from the 8 independent register chains per block
  * that hide the latency of each step, and from touching memory only once per
- * point: \f$\times3.4\f$ on 4096 points and \f$\times5.8\f$ on \f$10^6\f$ points
- * against the earlier loop over degrees outside and points inside (double,
- * \f$n=16\f$, AVX-512). The results are bitwise identical to the single-point
+ * point: about \f$\times20\f$ against the reference implementation (double,
+ * \f$n=16\f$, AVX-512, `-march=native`). The results are bitwise identical to the single-point
  * version.
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
@@ -268,7 +269,7 @@ void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp);
  * \param[in]  xi     points \f$\xi_i\f$, array of size `np`
  * \param[in]  np     number of points (may be 0)
  * \param[out] p      values, array of size `np`; must not alias `xi`
- * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
  * \theorypdf, Section 2.2, Eq. (A.1.3).
@@ -292,7 +293,7 @@ void jacobi(int n, double alpha, double beta,
  * \param[in]  xi     points \f$\xi_i\f$, array of size `np`
  * \param[in]  np     number of points (may be 0)
  * \param[out] dp     derivatives, array of size `np`; must not alias `xi`
- * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
  * \theorypdf, Section 2.3, Eq. (A.1.8).
@@ -320,8 +321,8 @@ void jacobi_deriv(int n, double alpha, double beta,
  * Register-blocked like jacobi(): for each block of 32 points, the four
  * recurrence variables (\f$P_k\f$, \f$P_{k-1}\f$ and their derivatives) stay
  * in registers for all \f$n\f$ steps, using the normalised forms (A.1.3') and
- * (D.2'). This replaces an earlier L1-cache blocking of 256 points:
- * \f$\times3.2\f$ to \f$\times3.9\f$ faster (double, \f$n=16\f$, AVX-512).
+ * (D.2'). About \f$\times15\f$ against the reference implementation (double,
+ * \f$n=16\f$, AVX-512, `-march=native`).
  *
  * \tparam     T      floating-point type: `float`, `double` or `long double`
  * \param[in]  n      degree, \f$n \ge 0\f$
@@ -331,7 +332,7 @@ void jacobi_deriv(int n, double alpha, double beta,
  * \param[in]  np     number of points (may be 0)
  * \param[out] p      values \f$P_n^{\alpha,\beta}(\xi_i)\f$, size `np`, or `nullptr` if not needed
  * \param[out] dp     derivatives \f$[P_n^{\alpha,\beta}]'(\xi_i)\f$, size `np`, or `nullptr` if not needed
- * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \note The derivative agrees with jacobi_deriv() to about \f$10^{-14}\f$
  *       (relative, in double) for \f$n \le 20\f$, not bitwise, since it comes
@@ -380,7 +381,7 @@ void jacobi_and_deriv(int n, double alpha, double beta,
  * \param[in]  xi     points \f$\xi_i\f$, array of size `np`
  * \param[in]  np     number of points (may be 0)
  * \param[out] V      matrix, array of size `np*(nmax+1)`
- * \throws     std::invalid_argument if \f$N<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$N<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
  * \theorypdf, Section 2.4, Eq. (D.4).
@@ -408,7 +409,7 @@ void jacobi_all(int nmax, double alpha, double beta,
  * \param[in]  beta   weight parameter \f$\beta > -1\f$
  * \param[in]  xi     points \f$\xi_i\f$
  * \param[out] p      values, resized to `xi.size()`
- * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  */
 template <typename T>
 void jacobi(int n, double alpha, double beta,
@@ -426,7 +427,7 @@ void jacobi(int n, double alpha, double beta,
  * \param[in]  beta   weight parameter \f$\beta > -1\f$
  * \param[in]  xi     points \f$\xi_i\f$
  * \param[out] dp     derivatives, resized to `xi.size()`
- * \throws     std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  */
 template <typename T>
 void jacobi_deriv(int n, double alpha, double beta,
@@ -455,8 +456,20 @@ void jacobi_deriv(int n, double alpha, double beta,
  *   h_0^{\alpha,\beta}
  *   = \frac{2^{\alpha+\beta+1}\,\Gamma(\alpha+1)\,\Gamma(\beta+1)}{\Gamma(\alpha+\beta+2)}.
  * \f]
- * Both are evaluated from logarithms with `std::lgamma`, since
- * \f$\Gamma(z)\f$ overflows double precision for \f$z > 171.6\f$.
+ * For \f$n\ge1\f$ the norm is built from \f$h_0\f$ with the quotient of
+ * (A.1.7) at consecutive degrees, (D.5'):
+ * \f[
+ *   \frac{h_1}{h_0} = \frac{(\alpha+1)(\beta+1)}{\alpha+\beta+3},\qquad
+ *   \frac{h_k}{h_{k-1}}
+ *   = \frac{(2k+\alpha+\beta-1)\,(k+\alpha)\,(k+\beta)}
+ *          {(2k+\alpha+\beta+1)\,k\,(k+\alpha+\beta)},\quad k\ge2 .
+ * \f]
+ * Every factor is close to 1, so the result is accurate to a few rounding
+ * errors (measured in `double`: \f$5\times10^{-16}\f$ for \f$n\le100\f$).
+ * Evaluating (A.1.7) directly from \f$\ln\Gamma\f$ would subtract terms of
+ * size \f$n\ln n\f$ and lose that many digits. \f$h_0\f$ uses `std::tgamma`,
+ * or `std::lgamma` for \f$\alpha+\beta\ge28\f$, where \f$\Gamma\f$ would
+ * overflow in `float`.
  *
  * Checks: \f$h_n^{0,0} = 2/(2n+1)\f$ (Legendre),
  * \f$h_0^{-1/2,-1/2} = \pi\f$ (Chebyshev).
@@ -467,10 +480,10 @@ void jacobi_deriv(int n, double alpha, double beta,
  * \param[in] alpha  weight parameter \f$\alpha > -1\f$
  * \param[in] beta   weight parameter \f$\beta > -1\f$
  * \return    \f$h_n^{\alpha,\beta}\f$
- * \throws    std::invalid_argument if \f$n<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws    std::invalid_argument if \f$n<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  *
  * \par Theory
- * \theorypdf, Section 2.5, Eqs. (A.1.7) and (D.5).
+ * \theorypdf, Section 2.5, Eqs. (A.1.7), (D.5) and (D.5').
  */
 template <typename T = double>
 T jacobi_norm2(int n, double alpha, double beta);
@@ -553,7 +566,7 @@ T jacobi_norm2(int n, double alpha, double beta);
  * \param[in]  alpha  weight parameter \f$\alpha > -1\f$
  * \param[in]  beta   weight parameter \f$\beta > -1\f$
  * \param[out] z      the \f$m\f$ zeros in increasing order, array of size `m`
- * \throws     std::invalid_argument if \f$m<0\f$, \f$\alpha\le-1\f$ or \f$\beta\le-1\f$
+ * \throws     std::invalid_argument if \f$m<0\f$, or \f$\alpha,\beta\f$ not finite and \f$>-1\f$
  * \throws     std::runtime_error if Newton does not converge for a zero, or if
  *             the certification (D.11) fails; this happens only in `float`
  *             beyond the DG parameter range

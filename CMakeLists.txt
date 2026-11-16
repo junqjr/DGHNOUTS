@@ -20,6 +20,7 @@ option(DGPOLY_NATIVE "Optimise for the CPU of the build machine" OFF)
 
 set(DGPOLY_WARNINGS "")
 set(DGPOLY_ARCH "")
+set(DGPOLY_FP "")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
   set(DGPOLY_WARNINGS -Wall -Wextra -Wpedantic)
   if(DGPOLY_NATIVE)
@@ -28,6 +29,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
     else()
       set(DGPOLY_ARCH -march=native)
     endif()
+  endif()
+  # IEEE arithmetic is required (src/jacobi_impl.hpp refuses -ffast-math).
+  # icpx optimises floating point more aggressively by default
+  # (-fp-model=fast): ask for the standard behaviour. GCC and Clang have it
+  # by default.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+    set(DGPOLY_FP -fp-model=precise)
   endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
   set(DGPOLY_WARNINGS -Wall)            # nvc++ has no -Wextra / -Wpedantic
@@ -56,7 +64,7 @@ add_library(dgpoly
   src/jacobi_reference.cpp    # dg::reference: the book's equations, to be read
   src/jacobi_optimized.cpp)   # dg::optimized: register blocking, FMA
 target_include_directories(dgpoly PUBLIC include PRIVATE src)
-target_compile_options(dgpoly PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH})
+target_compile_options(dgpoly PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH} ${DGPOLY_FP})
 if(DGHNOUTS_KERNELS STREQUAL "reference")
   target_compile_definitions(dgpoly PRIVATE DGHNOUTS_REFERENCE_KERNELS)
 endif()
@@ -73,7 +81,7 @@ foreach(t IN LISTS DGPOLY_TESTS)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE dgpoly)
   target_include_directories(${t} PRIVATE src)      # test_impl uses the internal header
-  target_compile_options(${t} PRIVATE ${DGPOLY_WARNINGS})
+  target_compile_options(${t} PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_FP})
 endforeach()
 
 if(POLYLIB_DIR)
@@ -101,7 +109,7 @@ endforeach()
 add_executable(bench_jacobi EXCLUDE_FROM_ALL bench/bench_jacobi.cpp)
 target_link_libraries(bench_jacobi PRIVATE dgpoly)
 target_include_directories(bench_jacobi PRIVATE src)  # times dg::reference and dg::optimized
-target_compile_options(bench_jacobi PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH})
+target_compile_options(bench_jacobi PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH} ${DGPOLY_FP})
 
 # ---------------------------------------------------------------------------
 # Documentation:  cmake --build --preset gcc --target doc

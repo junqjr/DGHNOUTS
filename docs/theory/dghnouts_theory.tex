@@ -104,7 +104,11 @@ convention, so \code{eta} never denotes a second hexahedron direction.
 All functions live in namespace \code{dg}. They throw
 \code{std::invalid\_argument} when $n<0$ or when $\alpha\le-1$ or
 $\beta\le-1$, since the polynomials are only defined (orthogonal) for
-$\alpha,\beta>-1$. Array routines take a raw pointer and a size,
+$\alpha,\beta>-1$; NaN and infinite parameters are rejected in the same way.
+The code requires IEEE arithmetic: it refuses to compile with
+\code{-ffast-math}, \code{-Ofast} or \code{-ffinite-math-only}, under which
+the compiler removes the \code{std::isfinite} tests that protect
+\code{jacobi\_zeros}. Array routines take a raw pointer and a size,
 \code{(const T* xi, std::size\_t np)}, so they accept any contiguous storage
 (\code{std::vector}, C arrays, Kokkos host views).
 
@@ -130,7 +134,7 @@ largest relative errors measured against \code{long double} by test~9
 \midrule
 values $\Pab{n}(\xi_i)$                    & $1\times10^{-5}$ & $2\times10^{-14}$ \\
 derivatives $\bigl[\Pab{n}\bigr]'(\xi_i)$  & $7\times10^{-5}$ & $2\times10^{-13}$ \\
-norms $h_n^{\alpha,\beta}$                 & $1\times10^{-5}$ & $2\times10^{-14}$ \\
+norms $h_n^{\alpha,\beta}$                 & $4\times10^{-7}$ & $1\times10^{-15}$ \\
 \midrule
 unit round-off                              & $6\times10^{-8}$ & $1.1\times10^{-16}$ \\
 \bottomrule
@@ -144,8 +148,9 @@ and without fused multiply-add.}
 \end{table}
 
 The recurrence amplifies the rounding error of each operation by a factor of
-a few hundred at $n=20$, and the norm suffers from cancellation between large
-$\ln\Gamma$ terms, so in \code{float} only 4 to 5 digits are correct. Nodes,
+a few hundred at $n=20$, so in \code{float} only 4 to 5 digits of the values
+and derivatives are correct (the norms, computed without cancellation by~(D.5$'$),
+keep about 6). Nodes,
 weights and matrices for a single-precision solver should therefore be
 computed in \code{double} and rounded to \code{float} afterwards, which keeps
 them accurate to $6\times10^{-8}$. The \code{long double} type is 80-bit
@@ -482,23 +487,32 @@ so that
   = \frac{2^{\alpha+\beta+1}\,\Gamma(\alpha+1)\,\Gamma(\beta+1)}{\Gamma(\alpha+\beta+2)},
   \dgtag\label{eq:h0}
 \end{equation}
-which is finite for all $\alpha,\beta>-1$. The code uses~\eqref{eq:h0} for
-$n=0$ and~(A.1.7) for $n\ge1$.
+which is finite for all $\alpha,\beta>-1$. It is evaluated with
+\code{std::tgamma}; for $\alpha+\beta\ge28$, where $\Gamma$ would overflow in
+\code{float}, from logarithms with \code{std::lgamma} ($\ln|\Gamma|$).
 
-\paragraph{Overflow.}
-$\Gamma(z)$ overflows double precision for $z>171.6$. The norm is therefore
-computed from logarithms with \code{std::lgamma} ($\ln|\Gamma|$, C++11),
-\begin{equation*}
-\begin{split}
-  \ln h_n^{\alpha,\beta}
-  ={}& (\alpha+\beta+1)\ln2 - \ln(2n+\alpha+\beta+1)
-  + \ln\Gamma(n+\alpha+1) + \ln\Gamma(n+\beta+1)\\
-  & - \ln\Gamma(n+1) - \ln\Gamma(n+\alpha+\beta+1),
-\end{split}
-\end{equation*}
-and $h_n^{\alpha,\beta}=\exp(\ln h_n^{\alpha,\beta})$. The terms
-$\ln\Gamma$ are large and nearly cancel, which is why the norm loses more
-accuracy in \code{float} than the values do (Table~\ref{tab:precision}).
+\paragraph{The case $n\ge1$: product form.}
+Evaluating~(A.1.7) directly is inaccurate. $\Gamma(z)$ overflows double
+precision for $z>171.6$, so the formula has to be computed from logarithms,
+$h_n=\exp(\ln h_n)$, and the terms $\ln\Gamma(n+\dots)\sim n\ln n$ nearly
+cancel: the relative error of $h_n^{0,0}$ in \code{double} is
+$8\times10^{-15}$ at $n=20$ and $2\times10^{-13}$ at $n=300$. The code
+instead builds $h_n$ from $h_0$ with the quotient of~(A.1.7) at consecutive
+degrees. Using $\Gamma(z+1)=z\,\Gamma(z)$,
+\begin{equation}
+  \frac{h_1^{\alpha,\beta}}{h_0^{\alpha,\beta}}
+  = \frac{(\alpha+1)(\beta+1)}{\alpha+\beta+3},
+  \qquad
+  \frac{h_k^{\alpha,\beta}}{h_{k-1}^{\alpha,\beta}}
+  = \frac{(2k+\alpha+\beta-1)\,(k+\alpha)\,(k+\beta)}
+         {(2k+\alpha+\beta+1)\,k\,(k+\alpha+\beta)},
+  \quad k\ge2,
+  \tag{D.5$'$}
+\end{equation}
+where the first quotient is taken from~\eqref{eq:h0} (the general one is
+$0/0$ at $k=1$ when $\alpha+\beta=-1$). Every factor is close to 1 and
+nothing cancels, so the error is a few rounding errors: below $10^{-15}$ in
+\code{double} for $n\le300$ (Table~\ref{tab:precision}).
 
 \paragraph{Checks.}
 For Legendre, (A.1.7) reduces to $h_n^{0,0}=2/(2n+1)$. For Chebyshev,
@@ -582,8 +596,8 @@ degree by degree (vectorised, but memory-bound and with the division on the
 chain), was 3 to 9 times slower than the optimised one. Without
 \code{-march=native} (SSE2 only, no FMA) the gains are smaller. The
 single-point routines are the same in both implementations to within noise: a
-single evaluation is one dependency chain. \code{jacobi\_norm2} (six
-\code{lgamma} calls) has a single implementation. To evaluate many points,
+single evaluation is one dependency chain. \code{jacobi\_norm2} ($n$
+multiplications) has a single implementation. To evaluate many points,
 use the array versions.
 
 \paragraph{\code{-march=native} on a cluster.}
@@ -941,7 +955,7 @@ Signature & Result & Equation \\
 \code{void jacobi\_all(int nmax, double alpha, double beta, const T* xi, std::size\_t np, T* V)}
   & $\mathbf{V}_{ik}=\Pab{k}(\xi_i)$, row-major & \eqref{eq:vandermonde} \\
 \code{T jacobi\_norm2<T = double>(int n, double alpha, double beta)}
-  & $h_n^{\alpha,\beta}$ & (A.1.7), \eqref{eq:h0} \\
+  & $h_n^{\alpha,\beta}$ & (A.1.7), \eqref{eq:h0}, (D.5$'$) \\
 \code{void jacobi\_zeros(int m, double alpha, double beta, T* z)}
   & zeros $\xi^{\alpha,\beta}_{i,m}$ of $\Pab{m}$, increasing & \eqref{eq:newton}--\eqref{eq:certify} \\
 \code{std::vector<T> jacobi\_zeros<T = double>(int m, double alpha, double beta)}

@@ -16,7 +16,8 @@
  *          | 1    | every evaluation routine of both implementations against `long double`; the optimised one must not be less accurate |
  *          | 2    | zeros: optimized vs reference, three precisions, \f$\alpha,\beta\f$ up to 21 |
  *          | 3    | the public functions are bitwise those of the chosen implementation |
- *          | 4    | both implementations reject invalid arguments |
+ *          | 4    | both implementations reject invalid arguments, including NaN and infinite \f$\alpha,\beta\f$ |
+ *          | 5    | `long double`: the derivative (A.1.8) is as accurate as the one-pass (D.2) |
  *
  * \par Theory
  * \theorypdf, Section 2.6.
@@ -250,6 +251,43 @@ int main()
         ok = ok && throws([&] { dg::reference::jacobi_zeros(3, 0.0, -2.0, &y); });
         ok = ok && throws([&] { dg::optimized::jacobi_zeros(3, 0.0, -2.0, &y); });
         report_bool("n < 0, alpha <= -1, beta <= -1: std::invalid_argument in both", ok);
+
+        // NaN and infinity: `alpha <= -1` is false for a NaN, which used to
+        // pass the check and come back as a silent NaN result.
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double inf = std::numeric_limits<double>::infinity();
+        bool ok2 = true;
+        for (double bad : {nan, inf, -inf}) {
+            ok2 = ok2 && throws([&] { dg::reference::jacobi(3, bad, 0.0, 0.5); });
+            ok2 = ok2 && throws([&] { dg::optimized::jacobi(3, 0.0, bad, 0.5); });
+            ok2 = ok2 && throws([&] { dg::reference::jacobi_zeros(3, 0.0, bad, &y); });
+            ok2 = ok2 && throws([&] { dg::optimized::jacobi_zeros(3, bad, 0.0, &y); });
+            ok2 = ok2 && throws([&] { dg::jacobi_norm2(3, bad, 0.0); });
+        }
+        report_bool("NaN or infinite alpha, beta: std::invalid_argument in both", ok2);
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf("\n5. long double: (A.1.8) is as accurate as the one-pass derivative (D.2)\n");
+    {
+        // alpha + 1 and beta + 1 of (A.1.8) must be formed in long double: for
+        // alpha = 0.3 the sum is not exact in double, and adding in double
+        // left jacobi_deriv<long double> with double accuracy (more than
+        // 1400 eps here; measured now: 80 eps, the round-off of the recurrence).
+        const long double eps = std::numeric_limits<long double>::epsilon();
+        long double e_ref = 0.0L, e_opt = 0.0L;
+        for (const Params& ab : {Params{0.3, -0.7}, Params{-0.9, 0.1}, Params{2.7, 1.3}})
+            for (int n = 1; n <= 8; ++n)
+                for (int i = 0; i <= 40; ++i) {
+                    const long double xi = -1.0L + 0.05L * i;
+                    long double p, d;
+                    dg::reference::jacobi_and_deriv(n, ab.a, ab.b, xi, p, d);
+                    e_ref = std::max(e_ref, rel_err(dg::reference::jacobi_deriv(n, ab.a, ab.b, xi), d));
+                    dg::optimized::jacobi_and_deriv(n, ab.a, ab.b, xi, p, d);
+                    e_opt = std::max(e_opt, rel_err(dg::optimized::jacobi_deriv(n, ab.a, ab.b, xi), d));
+                }
+        report("reference: (A.1.8) vs (D.2), units of long double eps", e_ref / eps, 200.0);
+        report("optimized: (A.1.8) vs (D.2), units of long double eps", e_opt / eps, 200.0);
     }
 
     return dgtest::summary();
