@@ -640,7 +640,7 @@ register blocks of 64 points                           & 0.21 & 0.20--0.22 \\
 \midrule
 single point, ns per call: coefficients on the fly / from a table & \multicolumn{2}{c}{56--58 / 10} \\
 certification, $m=64$, $\mu$s: one call per point / one array call & \multicolumn{2}{c}{15--16 / 0.7--0.8} \\
-deflation sum, $k=64$, ns: one chain / eight partial sums           & \multicolumn{2}{c}{38--40 / 38--39} \\
+deflation sum, $k=64$, ns: one chain (chosen) / eight partial sums  & \multicolumn{2}{c}{38--40 / 38--39} \\
 \bottomrule
 \end{tabular}}
 \caption{Each optimisation against its alternatives: \code{double}, $n=16$,
@@ -672,8 +672,9 @@ not use it, since a single call cannot reuse it.
 \item \textbf{Fused multiply-add} is not measured alone: together with the
 wider SIMD registers of \code{-march=native} it doubles the speed of the
 array routines.
-\item \textbf{The eight partial sums of the deflation sum} bring no
-measurable gain: the divisions, not the additions, set the time.
+\item \textbf{Eight partial sums for the deflation sum} brought no
+measurable gain, since the divisions, not the additions, set the time; they
+were removed.
 \end{itemize}
 
 \paragraph{\code{-march=native} on a cluster.}
@@ -959,8 +960,8 @@ coefficients of~(A.1.3$'$) are tabulated once per call instead of being
 recomputed at every Newton step, which makes each evaluation six times
 faster. The $m+1$ evaluations of the certification are done in one call of
 the register-blocked array routine, 16 to 20 times faster than one call per
-point. (The deflation sum $\sum_{j<k}1/(r-\xi_j)$ is split into eight partial
-sums; the measurements show no gain from it.) With fused multiply-adds, a call
+point. (Splitting the deflation sum $\sum_{j<k}1/(r-\xi_j)$ into eight
+partial sums was tried; it brought no gain and was removed.) With fused multiply-adds, a call
 takes about 4.5\,$\mu$s for $Q=16$, 20\,$\mu$s for $Q=32$ and 85\,$\mu$s for
 $Q=64$ Gauss--Lobatto nodes (\code{double}), 3 to 3.6 times less than the
 reference implementation (Section~\ref{sec:choices}).

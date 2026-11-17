@@ -317,7 +317,7 @@ double point_table(int n, double a, double b, double x, const ABC* t)
 }
 
 /**
- * \brief  Deflation sum \f$\sum_{j<k}1/(r-\xi_j)\f$ as one chain of additions.
+ * \brief  Deflation sum \f$\sum_{j<k}1/(r-\xi_j)\f$ as one chain of additions (what jacobi_optimized.cpp does).
  * \param[in] r  Newton iterate
  * \param[in] z  zeros already found
  * \param[in] k  their number
@@ -331,7 +331,7 @@ double deflation_chain(double r, const double* z, int k)
 }
 
 /**
- * \brief  Deflation sum with eight partial sums (what jacobi_optimized.cpp does).
+ * \brief  Deflation sum with eight partial sums (tried and removed: no gain).
  * \param[in] r  Newton iterate
  * \param[in] z  zeros already found
  * \param[in] k  their number
