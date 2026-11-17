@@ -330,15 +330,15 @@ algorithm that does have many points.
 |---|---|
 | Coefficient table, built once per call and read by every Newton step (`value_deriv_table()`) | single-point evaluation 56–58 → 10 ns |
 | Certification (D.11): the \f$m+1\f$ cut points evaluated in one call of the register-blocked array `jacobi()` | \f$m=32\f$: 4.0 → 0.2–0.25 µs; \f$m=64\f$: 15–16 → 0.7–0.8 µs |
-| Deflation sum \f$\sum_{j<k}1/(r-\xi_j)\f$ with eight partial sums (`deflation_sum()`) | no measurable gain (\f$k=64\f$: 38–40 ns either way) |
+| Deflation sum \f$\sum_{j<k}1/(r-\xi_j)\f$ with eight partial sums (tried, removed) | no measurable gain (\f$k=64\f$: 38–40 ns either way) |
 | Whole routine, Gauss–Lobatto nodes | \f$Q=16\f$: 13.4 → 4.3–4.5 µs; \f$Q=32\f$: 67 → 17–20 µs; \f$Q=64\f$: 307 → 84–88 µs |
 
-**About the deflation sum.** The eight partial sums were meant to break the
-chain of additions so that the compiler could use SIMD divisions. The
-measurement shows no gain: the \f$k\f$ divisions themselves, not the
-additions, set the time, and the divider is shared by all SIMD lanes. The
-technique is harmless but does not pay for its complexity; it is a candidate
-for simplification.
+**About the deflation sum.** An earlier version split the sum into eight
+partial sums, to break the chain of additions so that the compiler could use
+SIMD divisions. The measurement showed no gain: the \f$k\f$ divisions
+themselves, not the additions, set the time. Since it did not pay for its
+complexity, it was removed: `deflation_sum()` is now a plain loop, as in the
+reference implementation. `bench_choices` still measures both versions.
 
 The reflection (D.10), the exact symmetrisation and the certification (D.11)
 make the routine robust; they are not speed optimisations, and the reference

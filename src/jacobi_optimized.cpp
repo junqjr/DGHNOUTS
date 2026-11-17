@@ -594,8 +594,8 @@ inline void value_deriv_table(int n, const RecTable<T>& t, T a, T b, T xi, T& p,
 /**
  * \brief  Deflation sum \f$s = \sum_{j<k} 1/(r-\xi_j)\f$ of the Newton step (D.7).
  *
- * The \f$k\f$ divisions are independent; the sum is split into eight partial
- * sums (see "Optimisations" below for what this gains).
+ * A plain loop, as in the reference implementation (see "Optimisations"
+ * below for the alternative that was tried).
  *
  * \par Equations
  * The sum returned,
@@ -625,22 +625,17 @@ inline void value_deriv_table(int n, const RecTable<T>& t, T a, T b, T xi, T& p,
  * \return    \f$s\f$
  *
  * \par Optimisations
- * The eight partial sums were meant to let the compiler use SIMD divisions.
- * Measured with bench_choices, they bring no gain (\f$k=64\f$: 38–40 ns with
- * or without): the divisions, not the additions, set the time. Harmless, but a
- * candidate for simplification. See \ref opt-zeros "Zeros".
+ * None. Splitting the sum into eight partial sums, to let the compiler use
+ * SIMD divisions, was tried and measured with bench_choices: no gain
+ * (\f$k=64\f$: 38–40 ns either way), since the \f$k\f$ divisions, not the
+ * additions, set the time. It was removed to keep the code simple. See
+ * \ref opt-zeros "Zeros".
  */
 template <typename T>
 inline T deflation_sum(T r, const T* z, int k)
 {
-    constexpr int L = 8;
-    T acc[L] = {};
-    int j = 0;
-    for (; j + L <= k; j += L)
-        for (int l = 0; l < L; ++l) acc[l] += T(1) / (r - z[j + l]);
     T s = T(0);
-    for (; j < k; ++j) s += T(1) / (r - z[j]);
-    for (int l = 0; l < L; ++l) s += acc[l];
+    for (int j = 0; j < k; ++j) s += T(1) / (r - z[j]);
     return s;
 }
 
@@ -1117,7 +1112,8 @@ void jacobi_all(int nmax, double alpha, double beta,
  *   (value_deriv_table()): ×6 per evaluation;
  * - certification (D.11) with the \f$m+1\f$ cut points in one call of the
  *   register-blocked array jacobi(): ×16 to ×20 for that part;
- * - deflation sum with partial sums (deflation_sum()): no measurable gain.
+ * - the deflation sum (deflation_sum()) is a plain loop: eight partial sums
+ *   were tried, gained nothing measurable, and were removed.
  *
  * Whole routine, Gauss–Lobatto nodes: ×3 (\f$Q=16\f$) to ×3.6 (\f$Q=32, 64\f$)
  * against the reference implementation. See \ref opt-zeros "Zeros".
