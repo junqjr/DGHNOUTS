@@ -14,6 +14,12 @@
  *          - in jacobi_zeros(): coefficient table once per call, SIMD deflation
  *            sum, certification in one array call.
  *
+ *          Each technique, why it was chosen, the alternatives that were tried
+ *          and the measured gains are explained on the
+ *          \ref optimizations "Optimisations" page (docs/optimizations.md);
+ *          every routine below has a short "Optimisations" paragraph
+ *          pointing to it.
+ *
  *          The equations are those of Karniadakis & Sherwin, Appendix A.1, or
  *          (D.n) of the theory document. This implementation is the default
  *          (`DGHNOUTS_KERNELS=optimized`); test_impl.cpp checks it against the
@@ -55,6 +61,12 @@ namespace {
  * no division (see mad() for when the multiply-adds are fused).
  *
  * \tparam T floating-point type of the coefficients
+ *
+ * \par Optimisations
+ * Removes the division from the dependency chain of the recurrence: a step
+ * becomes two multiply-adds and one multiplication, and only the last
+ * multiply-add is on the chain. In cache, ×1.4–1.7 for the degree loop. See
+ * \ref opt-normalised "Normalised recurrence".
  */
 template <typename T>
 struct RecABC {
@@ -101,6 +113,14 @@ struct RecABC {
  *
  * \par Theory
  * \theorypdf, Section 2.2, Eq. (A.1.3').
+ *
+ * \par Optimisations
+ * Three true divisions, not one reciprocal and three multiplications: each
+ * coefficient is rounded once, which keeps the optimised implementation as
+ * accurate as the reference one for integer \f$\alpha,\beta\f$. The divisions
+ * are outside the loop over the points (or done once per call through
+ * RecTable), so the extra two cost nothing measurable. See
+ * \ref opt-normalised "Normalised recurrence".
  */
 template <typename T>
 inline RecABC<T> rec_abc(int n, T alpha, T beta)
@@ -136,6 +156,13 @@ inline RecABC<T> rec_abc(int n, T alpha, T beta)
  * \f]
  *
  * \tparam T floating-point type
+ *
+ * \par Optimisations
+ * Computing \f$A_k,B_k,C_k\f$ once per call instead of once per point or per
+ * Newton step makes a single-point evaluation 6 times faster (56 → 10 ns at
+ * \f$n=16\f$). The stack storage avoids a heap allocation (about 13 ns, as
+ * much as one evaluation) for every \f$n\le128\f$. See
+ * \ref opt-table "Coefficient table".
  */
 template <typename T>
 class RecTable {
@@ -214,6 +241,14 @@ private:
  * \param[in] y  second factor
  * \param[in] z  addend
  * \return    \f$xy+z\f$
+ *
+ * \par Optimisations
+ * The operation on the dependency chain of a step is a multiplication followed
+ * by a subtraction; fused, its latency is halved (about 4 cycles instead of 8).
+ * `std::fma` is used only when the compiler reports a hardware instruction
+ * (`FP_FAST_FMA`), since the software fallback is slow. Every routine uses this
+ * helper in the same order, which keeps the results bitwise identical between
+ * routines. See \ref opt-fma "Fused multiply-add".
  */
 template <typename T>
 inline T mad(T x, T y, T z)
@@ -240,11 +275,13 @@ inline T mad(T x, T y, T z)
 // kBlock points at once and run the whole recurrence on them: with 32
 // doubles (8 AVX2 registers) the chains of different points overlap, and
 // P_k, P_{k-1} never leave the registers. Memory traffic falls to one read
-// of xi and one write of the result per point. Measured with bench_jacobi:
-// 8 and 16 points per block are latency-bound and about 2.5x slower.
+// of xi and one write of the result per point. Measured with bench_choices:
+// 8 and 16 points per block are latency-bound and about 2.5x slower; 64 is
+// no faster. See docs/optimizations.md for the measurements and alternatives.
 // ---------------------------------------------------------------------------
 
-/// Number of points per register block (measured optimum, see bench_jacobi).
+/// Number of points per register block: the smallest block on the measured
+/// plateau (see bench_choices and \ref opt-blocking "Register blocking").
 constexpr int kBlock = 32;
 
 /**
@@ -291,6 +328,14 @@ constexpr int kBlock = 32;
  * \param[in]  scale  factor applied to the result (1 for values; the factor of
  *                    (A.1.8) for derivatives)
  * \param[out] out    \f$s\,P_n(\xi_i)\f$
+ *
+ * \par Optimisations
+ * Register blocking: the recurrence of 32 points runs with \f$\xi_i\f$,
+ * \f$P_k\f$ and \f$P_{k-1}\f$ in SIMD registers, so memory is touched once per
+ * point whatever \f$n\f$, and the 32 independent chains hide the latency of
+ * each step. Against the degree loop over whole arrays: ×2.4 in cache, ×5.5
+ * out of cache. `scale` folds the factor of (A.1.8) into the final write, so
+ * jacobi_deriv() needs no second pass. See \ref opt-blocking "Register blocking".
  */
 template <typename T, typename Len>
 inline void values_block(int n, const RecTable<T>& t, T a, T b,
@@ -352,6 +397,14 @@ inline void values_block(int n, const RecTable<T>& t, T a, T b,
  * \param[in]  m    number of points in the block, \f$\le\f$ kBlock
  * \param[out] p    values, or `nullptr`
  * \param[out] dp   derivatives, or `nullptr`
+ *
+ * \par Optimisations
+ * Same register blocking as values_block(), with four variables per point.
+ * \f$A_k+B_k\xi_i\f$ (`axi`) is computed once and shared by the two
+ * recurrences. 32 points × 4 variables fit in the 16 AVX2 / 32 AVX-512
+ * registers; 64 points would not, which is one reason for `kBlock` = 32.
+ * Against the degree loop over whole arrays: ×4 in cache, ×6 out of cache.
+ * See \ref opt-blocking "Register blocking".
  */
 template <typename T, typename Len>
 inline void values_derivs_block(int n, const RecTable<T>& t, T a, T b,
@@ -409,6 +462,13 @@ inline void values_derivs_block(int n, const RecTable<T>& t, T a, T b,
  * \param[in]  xi    the points of the block
  * \param[in]  m     number of points in the block, \f$\le\f$ kBlock
  * \param[out] V     first row of the block in \f$\mathbf{V}\f$ (row-major, `nmax+1` columns)
+ *
+ * \par Optimisations
+ * Fills the 32 rows of a block together, while they are in the L1 cache,
+ * instead of writing \f$\mathbf{V}\f$ column by column (which touches every row
+ * at every degree): ×2 in cache, ×2.7 out of cache. The routine stays limited
+ * by writing its own output, \f$N+1\f$ values per point. See
+ * \ref opt-vandermonde "Vandermonde matrix: row blocks".
  */
 template <typename T, typename Len>
 inline void all_block(int nmax, const RecTable<T>& t, T a, T b,
@@ -449,6 +509,12 @@ inline void all_block(int nmax, const RecTable<T>& t, T a, T b,
  * \param[in] np      number of points
  * \param[in] kernel  callable `(i0, len)` where `len` is
  *                    `std::integral_constant<int, kBlock>` or an `int`
+ *
+ * \par Optimisations
+ * Full blocks receive their size as the compile-time constant
+ * `std::integral_constant<int, kBlock>`, so the compiler unrolls and vectorises
+ * the point loop of the kernel completely; only the last, partial block uses a
+ * run-time size. See \ref opt-blocking "Register blocking".
  */
 template <typename Kernel>
 inline void for_each_block(std::size_t np, Kernel&& kernel)
@@ -503,6 +569,12 @@ inline void for_each_block(std::size_t np, Kernel&& kernel)
  * \param[in]  xi  evaluation point
  * \param[out] p   \f$P_n(\xi)\f$
  * \param[out] dp  \f$P_n'(\xi)\f$
+ *
+ * \par Optimisations
+ * Reads \f$A_k,B_k,C_k\f$ from the table built once per call of
+ * jacobi_zeros(), instead of recomputing them (three divisions per degree) at
+ * every Newton step: 56–58 → 10 ns per evaluation at \f$n=16\f$, the main gain
+ * of jacobi_zeros(). See \ref opt-zeros "Zeros".
  */
 template <typename T>
 inline void value_deriv_table(int n, const RecTable<T>& t, T a, T b, T xi, T& p, T& dp)
@@ -522,8 +594,8 @@ inline void value_deriv_table(int n, const RecTable<T>& t, T a, T b, T xi, T& p,
 /**
  * \brief  Deflation sum \f$s = \sum_{j<k} 1/(r-\xi_j)\f$ of the Newton step (D.7).
  *
- * The \f$k\f$ divisions are independent: eight partial sums let the compiler
- * use SIMD divisions, instead of one long chain of dependent additions.
+ * The \f$k\f$ divisions are independent; the sum is split into eight partial
+ * sums (see "Optimisations" below for what this gains).
  *
  * \par Equations
  * The sum returned,
@@ -551,6 +623,12 @@ inline void value_deriv_table(int n, const RecTable<T>& t, T a, T b, T xi, T& p,
  * \param[in] z  zeros already found
  * \param[in] k  number of zeros already found
  * \return    \f$s\f$
+ *
+ * \par Optimisations
+ * The eight partial sums were meant to let the compiler use SIMD divisions.
+ * Measured with bench_choices, they bring no gain (\f$k=64\f$: 38–40 ns with
+ * or without): the divisions, not the additions, set the time. Harmless, but a
+ * candidate for simplification. See \ref opt-zeros "Zeros".
  */
 template <typename T>
 inline T deflation_sum(T r, const T* z, int k)
@@ -611,6 +689,12 @@ namespace {
  * \param[in] b   \f$\beta\f$
  * \param[in] xi  evaluation point \f$\xi\f$
  * \return    \f$P_n^{a,b}(\xi)\f$
+ *
+ * \par Optimisations
+ * Coefficients computed on the fly with rec_abc(): a single call evaluates the
+ * degree once, so a table would cost the same divisions plus the stores. The
+ * divisions of rec_abc() are off the dependency chain, unlike the book's
+ * division of \f$P_{k+1}\f$ by \f$a_k^1\f$. See \ref opt-table "Coefficient table".
  */
 template <typename T>
 inline T value_point(int n, T a, T b, T xi)
@@ -647,6 +731,12 @@ inline T value_point(int n, T a, T b, T xi)
  * \f[
  *   A_n = \frac{a_n^2}{a_n^1},\qquad B_n = \frac{a_n^3}{a_n^1},\qquad C_n = \frac{a_n^4}{a_n^1}
  * \f]
+ *
+ * \par Optimisations
+ * None beyond value_point(): a single point is one dependency chain, and the
+ * time (about 55 ns at \f$n=16\f$) is set by its latency. Same speed as the
+ * reference implementation to within noise. For many points, use the array
+ * version. See \ref opt-cost "Where the time goes".
  */
 template <typename T>
 T jacobi(int n, double alpha, double beta, T xi)
@@ -671,6 +761,10 @@ T jacobi(int n, double alpha, double beta, T xi)
  *   P_{n+1}^{\alpha,\beta}(\xi)
  *   = \bigl(A_n + B_n\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - C_n\,P_{n-1}^{\alpha,\beta}(\xi)
  * \f]
+ *
+ * \par Optimisations
+ * As for the single-point jacobi(): one dependency chain, latency-bound.
+ * See \ref opt-cost "Where the time goes".
  */
 template <typename T>
 T jacobi_deriv(int n, double alpha, double beta, T xi)
@@ -714,6 +808,12 @@ T jacobi_deriv(int n, double alpha, double beta, T xi)
  * | `pm`, `pk`, `q`  | \f$P_{k-1},\ P_k,\ P_{k+1}\f$ |
  * | `dm`, `dk`, `dq` | \f$P_{k-1}',\ P_k',\ P_{k+1}'\f$ |
  * | `axi`            | \f$A_k + B_k\,\xi\f$ |
+ *
+ * \par Optimisations
+ * One pass gives the value and the derivative; \f$A_k+B_k\xi\f$ (`axi`) is
+ * shared by the two recurrences. The operations are the same, in the same
+ * order, as in values_derivs_block(), so the results are bitwise identical to
+ * the array version. See \ref opt-fma "Fused multiply-add".
  */
 template <typename T>
 void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp)
@@ -763,6 +863,13 @@ void jacobi_and_deriv(int n, double alpha, double beta, T xi, T& p, T& dp)
  * \f[
  *   A_n = \frac{a_n^2}{a_n^1},\qquad B_n = \frac{a_n^3}{a_n^1},\qquad C_n = \frac{a_n^4}{a_n^1}
  * \f]
+ *
+ * \par Optimisations
+ * Coefficient table once per call (RecTable), register blocks of 32 points
+ * (values_block()), fused multiply-add (mad()). Measured at \f$n=16\f$ with
+ * `-march=native`: 0.16–0.19 ns per point and per degree, against 3.6–4.3 for
+ * the reference implementation (×22); ×11 without `-march=native`. See
+ * \ref optimizations "Optimisations".
  */
 template <typename T>
 void jacobi(int n, double alpha, double beta,
@@ -797,6 +904,12 @@ void jacobi(int n, double alpha, double beta,
  *   P_{n+1}^{\alpha,\beta}(\xi)
  *   = \bigl(A_n + B_n\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - C_n\,P_{n-1}^{\alpha,\beta}(\xi)
  * \f]
+ *
+ * \par Optimisations
+ * (A.1.8) reduces the derivative to values of degree \f$n-1\f$, computed by
+ * the same register-blocked kernel as jacobi(); the factor
+ * \f$\tfrac12(n+\alpha+\beta+1)\f$ is applied when each block is written, not
+ * in a second pass over `dp`. See \ref opt-deriv "Derivatives".
  */
 template <typename T>
 void jacobi_deriv(int n, double alpha, double beta,
@@ -850,6 +963,14 @@ void jacobi_deriv(int n, double alpha, double beta,
  * \f[
  *   A_n = \frac{a_n^2}{a_n^1},\qquad B_n = \frac{a_n^3}{a_n^1},\qquad C_n = \frac{a_n^4}{a_n^1}
  * \f]
+ *
+ * \par Optimisations
+ * Coefficient table once per call, register blocks of 32 points with four
+ * variables each (values_derivs_block()), fused multiply-add. Measured at
+ * \f$n=16\f$ with `-march=native`: 0.32–0.36 ns per point and per degree,
+ * against 5.1–6.1 for the reference implementation (×16). An L1-cache-blocked
+ * version is as fast on CPU; register blocking was kept for its GPU-like shape
+ * and because it needs no scratch arrays. See \ref opt-blocking "Register blocking".
  */
 template <typename T>
 void jacobi_and_deriv(int n, double alpha, double beta,
@@ -892,6 +1013,12 @@ void jacobi_and_deriv(int n, double alpha, double beta,
  *   P_{n+1}^{\alpha,\beta}(\xi)
  *   = \bigl(A_n + B_n\,\xi\bigr)\,P_n^{\alpha,\beta}(\xi) - C_n\,P_{n-1}^{\alpha,\beta}(\xi)
  * \f]
+ *
+ * \par Optimisations
+ * Row blocks of 32 points (all_block()): each row of \f$\mathbf{V}\f$ is
+ * written while it is in L1. ×5.5 against the reference in cache; out of cache
+ * the routine is limited by writing its output and the gain falls to ×1.7.
+ * See \ref opt-vandermonde "Vandermonde matrix: row blocks".
  */
 template <typename T>
 void jacobi_all(int nmax, double alpha, double beta,
@@ -982,6 +1109,18 @@ void jacobi_all(int nmax, double alpha, double beta,
  *   \operatorname{sign} P_m^{\alpha,\beta}(c_i) \neq \operatorname{sign} P_m^{\alpha,\beta}(c_{i+1}),
  *   \qquad i=0,\dots,m-1
  * \f]
+ *
+ * \par Optimisations
+ * Each Newton step is a single-point evaluation, a dependency chain that cannot
+ * be vectorised across points, so the gains come from doing less per step:
+ * - coefficient table built once per call, read by every step
+ *   (value_deriv_table()): ×6 per evaluation;
+ * - certification (D.11) with the \f$m+1\f$ cut points in one call of the
+ *   register-blocked array jacobi(): ×16 to ×20 for that part;
+ * - deflation sum with partial sums (deflation_sum()): no measurable gain.
+ *
+ * Whole routine, Gauss–Lobatto nodes: ×3 (\f$Q=16\f$) to ×3.6 (\f$Q=32, 64\f$)
+ * against the reference implementation. See \ref opt-zeros "Zeros".
  */
 template <typename T>
 void jacobi_zeros(int m, double alpha, double beta, T* z)

@@ -111,6 +111,13 @@ target_link_libraries(bench_jacobi PRIVATE dgpoly)
 target_include_directories(bench_jacobi PRIVATE src)  # times dg::reference and dg::optimized
 target_compile_options(bench_jacobi PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH} ${DGPOLY_FP})
 
+# --- the optimisation choices measured against their alternatives (not a test):
+#     cmake --build --preset <p> --target bench_choices; see docs/optimizations.md
+add_executable(bench_choices EXCLUDE_FROM_ALL bench/bench_choices.cpp)
+target_link_libraries(bench_choices PRIVATE dgpoly)
+target_include_directories(bench_choices PRIVATE src)
+target_compile_options(bench_choices PRIVATE ${DGPOLY_WARNINGS} ${DGPOLY_ARCH} ${DGPOLY_FP})
+
 # ---------------------------------------------------------------------------
 # Documentation:  cmake --build --preset gcc --target doc
 #   HTML API documentation (Doxygen) in <build>/doc/html, with the theory PDF

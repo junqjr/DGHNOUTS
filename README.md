@@ -56,7 +56,8 @@ dghnouts/
 ├── CMakeLists.txt        build definition, compiler-specific flags
 ├── CMakePresets.json     one preset per compiler (gcc, nvhpc, intel, clang, gcc-debug)
 ├── bench/
-│   └── bench_jacobi.cpp  timing of every routine (target bench_jacobi)
+│   ├── bench_jacobi.cpp  timing of every routine (target bench_jacobi)
+│   └── bench_choices.cpp each optimisation against its alternatives (target bench_choices)
 ├── docs/
 │   ├── Doxyfile          Doxygen configuration (API reference)
 │   ├── mainpage.md       front page of the API reference
@@ -137,6 +138,13 @@ processor of the machine that compiles, and a login node may have a different
 one. Results and the optimisations behind them (normalised recurrence, register
 blocking, fused multiply-add) are in Section 2.6 of the theory document.
 
+`bench/bench_choices.cpp` (target `bench_choices`) measures each optimisation
+against the alternatives that were tried: loop order, normalised recurrence,
+block size, L1-cache versus register blocking, coefficient table, and the
+parts of the zero finder. Its results, and the reasons for each choice, are
+explained on the **Optimisations** page of the Doxygen documentation
+(`docs/optimizations.md`).
+
 ## Reference and optimised implementations
 
 Every numerical routine exists twice, with the same interface and the same
@@ -145,7 +153,7 @@ results up to round-off:
 | Implementation | File | Written for |
 |---|---|---|
 | `dg::reference` | `src/jacobi_reference.cpp` | **reading**: the book's equations, one point at a time |
-| `dg::optimized` | `src/jacobi_optimized.cpp` | **speed**: register blocking, fused multiply-add (15–40× faster on many points) |
+| `dg::optimized` | `src/jacobi_optimized.cpp` | **speed**: register blocking, fused multiply-add (15–40× faster on many points with `-march=native`) |
 
 **New to the code? Read `src/jacobi_reference.cpp` first**, next to the theory
 document: every line is commented with its equation number. The optimised file
