@@ -77,7 +77,10 @@ in the module \code{include/jacobi.hpp}.
   \item $\Pab{n}(\xi)$ is the Jacobi polynomial of degree $n \ge 0$ with
         weight parameters $\alpha,\beta > -1$.
   \item $L_n(\xi) = \Jac{n}{0}{0}(\xi)$ is the Legendre polynomial and
-        $T_n(\xi)$ the Chebyshev polynomial.
+        $T_n(\xi) = \frac{2^{2n}(n!)^2}{(2n)!}\,\Jac{n}{-1/2}{-1/2}(\xi)$ the
+        Chebyshev polynomial (of the first kind, $T_n(\cos\theta)=\cos n\theta$).
+        Unlike $L_n$, $T_n$ is only proportional to the Jacobi polynomial:
+        the factor makes $T_n(1)=1$.
   \item $\Gamma(z)$ is the Gamma function, $\Gamma(n+1)=n!$ for integer $n\ge0$.
 \end{itemize}
 
