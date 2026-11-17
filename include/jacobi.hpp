@@ -108,11 +108,16 @@ template <typename T> using nondeduced_t = typename nondeduced<T>::type;
  *   32 doubles give 8 independent AVX2 registers, enough to hide its latency.
  * - **Fused multiply-add** is used when the hardware has it (`-march=native`,
  *   CMake option `DGPOLY_NATIVE=ON`); it halves the latency of a step.
- * - Measured with `bench_jacobi` (AVX-512 Xeon, `-march=native`, double,
- *   \f$n=16\f$): \f$\times15\f$ to \f$\times40\f$ for the array routines and
- *   \f$\times3\f$ for jacobi_zeros(), compared with the reference
- *   implementation. The single-point routines are latency-bound by nature:
- *   for many points, use the array versions.
+ * - Measured with `bench_jacobi` and `bench_choices` (AVX-512 Xeon,
+ *   `-march=native`, double, \f$n=16\f$): \f$\times15\f$ to \f$\times40\f$
+ *   for the array routines (\f$\times5\f$ for jacobi_all(), which writes a
+ *   whole matrix, and less out of cache) and \f$\times3\f$ to
+ *   \f$\times3.6\f$ for jacobi_zeros(), compared with the reference
+ *   implementation; about half that without `-march=native`. The
+ *   single-point routines are latency-bound by nature: for many points, use
+ *   the array versions.
+ * - Why each technique was chosen, the alternatives that were measured, and
+ *   the gain of each one: see \ref optimizations "Optimisations".
  *
  * \par Two implementations
  * These techniques live in the optimised implementation (jacobi_optimized.cpp,
@@ -668,11 +673,12 @@ T jacobi_norm2(int n, double alpha, double beta);
  * Each Newton step evaluates \f$P_m\f$ and \f$P_m'\f$ at one point: a single
  * dependency chain of \f$m\f$ steps, so the cost is about
  * \f$m^2\times\f$(iterations) chain steps. The coefficient table is built
- * once per call, the deflation sum uses eight partial sums (SIMD divisions),
- * and the certification evaluates its \f$m+1\f$ points in one array call.
- * Measured (GLL, double, AVX-512): 4.5 µs for \f$m=16\f$, 22 µs for
- * \f$m=32\f$, 80 µs for \f$m=64\f$, about 3 times faster than without these
- * optimisations; negligible in a solver, where it runs once.
+ * once per call (each evaluation 6 times faster) and the certification
+ * evaluates its \f$m+1\f$ points in one array call (16 to 20 times faster).
+ * Measured (Gauss–Lobatto, double, AVX-512): 4.3–4.5 µs for \f$Q=16\f$,
+ * 17–20 µs for \f$Q=32\f$, 84–88 µs for \f$Q=64\f$, 3 to 3.6 times faster
+ * than the reference implementation; negligible in a solver, where it runs
+ * once. See \ref opt-zeros "Optimisations: zeros".
  *
  * \par Accuracy and range (measured for m up to 60)
  * - `double`: within \f$2\times10^{-16}\f$ of the `long double` zeros (1–2 ulp)

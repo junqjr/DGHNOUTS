@@ -15,6 +15,7 @@
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
+\usepackage{graphicx}
 \usepackage{array}
 \usepackage{xcolor}
 \usepackage{listings}
@@ -395,9 +396,10 @@ With the normalised coefficients of~(A.1.3$'$), the derivative recurrence reads
 \end{equation}
 \code{jacobi\_and\_deriv} needs four recurrence variables per point
 ($\Pab{k}$, $\Pab{k-1}$ and their derivatives). The array version keeps them in
-registers for blocks of 32 points, like \code{jacobi}. An earlier version
-kept them in four arrays in the L1 cache, in blocks of 256 points; register
-blocking is $3.2$ to $3.9$ times faster (Section~\ref{sec:performance}).
+registers for blocks of 32 points, like \code{jacobi}. Keeping them instead in
+four arrays in the L1 cache, in blocks of 256 points, is as fast on the CPU
+measured; register blocking was kept for the reasons given in
+Section~\ref{sec:choices}.
 
 \begin{center}
 \begin{tabular}{@{}lll@{}}
@@ -590,15 +592,86 @@ repetitions. On this shared machine, differences below about 30\,\% are noise.}
 \end{table}
 
 For many points the optimised array routines are 15 to 40 times faster than
-the reference, which evaluates one point at a time; the zeros are 3 times
-faster. An intermediate version, with~(A.1.3) evaluated for all points
-degree by degree (vectorised, but memory-bound and with the division on the
-chain), was 3 to 9 times slower than the optimised one. Without
+the reference, which evaluates one point at a time (\code{jacobi\_all},
+limited by writing its output matrix, gains less); the zeros are 3 times
+faster. A version with~(A.1.3) evaluated for all points degree by degree
+(vectorised, but memory-bound and with the division on the chain) is 3 to 6
+times slower than the optimised one. Without
 \code{-march=native} (SSE2 only, no FMA) the gains are smaller. The
 single-point routines are the same in both implementations to within noise: a
 single evaluation is one dependency chain. \code{jacobi\_norm2} ($n$
 multiplications) has a single implementation. To evaluate many points,
 use the array versions.
+
+\subsubsection*{Optimisation choices}
+\label{sec:choices}
+A step of the recurrence for one point depends on the previous step: for one
+point, (A.1.3) is a dependency chain whose speed is set by the latency of its
+operations (about 4 cycles for a multiply-add, 13 to 20 for a division).
+Different points are independent and can share SIMD registers. Every
+technique of the optimised implementation either shortens the chain or
+processes more independent points together without returning to memory.
+The program \code{bench/bench\_choices.cpp} (target \code{bench\_choices})
+measures each one against the alternatives that were considered
+(Table~\ref{tab:choices}); the Doxygen page \emph{Optimisations} explains each
+choice in detail.
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\code{jacobi} (array), ns per point and per degree & $n_p=4096$ & $n_p=2^{20}$ \\
+\midrule
+reference: one point at a time,~(A.1.3) with division & 4.3 & 3.6--4.2 \\
+degree outer, whole arrays,~(A.1.3) with division     & 0.65 & 1.0 \\
+degree outer, whole arrays,~(A.1.3$'$)                & 0.38--0.46 & 0.95--1.07 \\
+L1-cache blocks of 256 points                          & 0.15--0.18 & 0.18--0.20 \\
+register blocks of 8 / 16 points                       & 0.46--0.53 / 0.39--0.47 & 0.46--0.55 / 0.44--0.48 \\
+register blocks of 32 points (chosen)                  & 0.16--0.19 & 0.17--0.19 \\
+register blocks of 64 points                           & 0.21 & 0.20--0.22 \\
+\midrule
+\code{jacobi\_and\_deriv}: whole arrays / L1 blocks / register blocks & 1.5 / 0.25--0.33 / 0.35 & 2.0 / 0.37--0.39 / 0.32 \\
+\code{jacobi\_all}: column by column / row blocks (chosen)            & 1.4--1.5 / 0.68--0.72 & 6.1 / 2.1--2.3 \\
+\midrule
+single point, ns per call: coefficients on the fly / from a table & \multicolumn{2}{c}{56--58 / 10} \\
+certification, $m=64$, $\mu$s: one call per point / one array call & \multicolumn{2}{c}{15--16 / 0.7--0.8} \\
+deflation sum, $k=64$, ns: one chain / eight partial sums           & \multicolumn{2}{c}{38--40 / 38--39} \\
+\bottomrule
+\end{tabular}}
+\caption{Each optimisation against its alternatives: \code{double}, $n=16$,
+$\alpha=\beta=0$, Intel Xeon with AVX-512 and FMA, GCC~13,
+\code{-O3 -march=native}; ranges over two runs on a shared machine.}
+\label{tab:choices}
+\end{table}
+
+\begin{itemize}
+\item \textbf{Vectorising across points} (degree loop outside, point loop
+inside) gives the largest single gain, $\times6.5$, but over whole arrays the
+loop is limited by memory once the points leave the cache.
+\item \textbf{The normalised recurrence~(A.1.3$'$)} takes the division off
+the chain: $\times1.4$--$1.7$ in cache, nothing when memory-bound. Its
+coefficients are computed with three true divisions, each rounded once, to
+keep the accuracy of the reference (Section~\ref{sec:values}).
+\item \textbf{Blocking} keeps the working set close to the processor:
+$\times2.4$ in cache and $\times5.5$ out of cache. Register blocks of 32 points
+and L1-cache blocks of 256 points perform the same here. Register blocking was
+kept because it needs no scratch arrays, because its small fixed block lets
+the compiler unroll the point loop, and because it has the shape of a GPU
+kernel (one point per thread, the recurrence in registers). Blocks of 8 or 16
+points are latency-bound; 64 is not faster and would need more registers than
+exist for the four variables of \code{jacobi\_and\_deriv}.
+\item \textbf{A coefficient table} built once per call pays off whenever the
+same degree is evaluated many times: $\times6$ per single-point evaluation,
+which is the main gain of \code{jacobi\_zeros}. The single-point routines do
+not use it, since a single call cannot reuse it.
+\item \textbf{Fused multiply-add} is not measured alone: together with the
+wider SIMD registers of \code{-march=native} it doubles the speed of the
+array routines.
+\item \textbf{The eight partial sums of the deflation sum} bring no
+measurable gain: the divisions, not the additions, set the time.
+\end{itemize}
 
 \paragraph{\code{-march=native} on a cluster.}
 This flag optimises for the processor of the machine that compiles. If a
@@ -880,13 +953,14 @@ Each Newton step evaluates $\Pab{m}$ and its derivative at one point, a
 single dependency chain of $m$ steps, so a call costs about
 $m^2\times$(iterations per zero) chain steps. Three measures reduce it. The
 coefficients of~(A.1.3$'$) are tabulated once per call instead of being
-recomputed at every Newton step. The deflation sum
-$\sum_{j<k}1/(r-\xi_j)$ uses eight partial sums, so that its independent
-divisions run as SIMD operations. The $m+1$ evaluations of the certification
-are done in one call of the register-blocked array routine. With fused
-multiply-adds, a call takes 4.5\,$\mu$s for $m=16$, 22\,$\mu$s for $m=32$ and
-80\,$\mu$s for $m=64$ (GLL, \code{double}), about three times less than
-before (Table~\ref{tab:perf}).
+recomputed at every Newton step, which makes each evaluation six times
+faster. The $m+1$ evaluations of the certification are done in one call of
+the register-blocked array routine, 16 to 20 times faster than one call per
+point. (The deflation sum $\sum_{j<k}1/(r-\xi_j)$ is split into eight partial
+sums; the measurements show no gain from it.) With fused multiply-adds, a call
+takes about 4.5\,$\mu$s for $Q=16$, 20\,$\mu$s for $Q=32$ and 85\,$\mu$s for
+$Q=64$ Gauss--Lobatto nodes (\code{double}), 3 to 3.6 times less than the
+reference implementation (Section~\ref{sec:choices}).
 
 \begin{center}
 \begin{tabular}{@{}l>{\raggedright\arraybackslash}p{0.36\textwidth}@{}}

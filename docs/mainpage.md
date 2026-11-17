@@ -20,6 +20,9 @@ How to read the two together
   jacobi_optimized.cpp). The public functions use the optimised one unless the
   library is built with `-DDGHNOUTS_KERNELS=reference`; see jacobi_impl.hpp.
 
+- Every routine of jacobi_optimized.cpp also has an "Optimisations" paragraph:
+  what the routine does for speed, what it gains, and a link to the
+  \ref optimizations "Optimisations" page.
 - Every routine's documentation states the equation it implements, with the
   book's number, e.g. (A.1.3), or (D.n) for an equation derived in the theory
   document, and the section of \theorypdf where it is discussed.
@@ -39,8 +42,14 @@ Tests
 test_jacobi.cpp lists every identity checked and its tolerance
 (\theorypdf, Section 3).
 
-Performance: bench_jacobi.cpp times every routine; the optimisations and the
-measurements are in \theorypdf, Section 2.6.
+Performance
+-----------
+
+The \ref optimizations "Optimisations" page explains each computing technique
+of jacobi_optimized.cpp: why it was chosen, the alternatives that were tried,
+and the measured gain of each one. bench_jacobi.cpp times every routine;
+bench_choices.cpp measures each technique against its alternatives. The
+summary is in \theorypdf, Section 2.6.
 
 Building, testing and choosing the compiler are described in the
 `README.md` at the root of the repository.
@@ -56,5 +65,5 @@ cmake --build --preset gcc --target doc
 
 The `doc` target runs Doxygen and, if `latexmk` is installed, builds the theory
 PDF and copies it next to the HTML pages so that the \theorypdf links work.
-Formulas are rendered by MathJax, loaded from a CDN, so viewing them needs an
-internet connection.
+Formulas are rendered as images when the documentation is built (this needs
+`latex`, `dvips` and `gs`), so the pages can be read offline.
